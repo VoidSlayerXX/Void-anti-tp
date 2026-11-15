@@ -964,4 +964,71 @@ for _i = 1, #_codes do
     end
     _previous = _entry
 end
-return loadstring(table.concat(_decoded))()
+-- VOID HUB V1 / STARTUP RECOVERY
+-- Keep the newest build, but never leave a blank ScreenGui on a compile
+-- or initialization error. Error detail goes to executor/Roblox console.
+local _source = table.concat(_decoded)
+local _compiled, _compileError = loadstring(_source)
+local _healthy, _error = false, nil
+if _compiled then
+    _healthy, _error = pcall(_compiled)
+else
+    _error = _compileError or "loadstring returned no function"
+end
+if _healthy then
+    print("[VOID HUB RECOVERY] Updated script started successfully.")
+    return _error
+end
+
+warn("[VOID HUB RECOVERY] UPDATED BUILD ERROR: " .. tostring(_error))
+warn("[VOID HUB RECOVERY] Falling back to legacy working hub; Counter TP unavailable in recovery mode.")
+local _player = game:GetService("Players").LocalPlayer
+local _playerGui = _player and _player:FindFirstChildOfClass("PlayerGui")
+if _playerGui then
+    for _, _name in ipairs({"VoidHubV1", "VOID_HUB", "VoidHubV1_Intro"}) do
+        local _old = _playerGui:FindFirstChild(_name)
+        if _old then pcall(function() _old:Destroy() end) end
+    end
+end
+local _fallbackOk, _fallbackError = pcall(function()
+    local _legacy = game:HttpGet(
+        "https://raw.githubusercontent.com/VoidSlayerXX/Void-anti-tp/main/VoidHubV1Shareshare.lua")
+    local _run, _legacyCompileError = loadstring(_legacy)
+    if not _run then error(_legacyCompileError or "Legacy compile failed") end
+    _run()
+end)
+if not _fallbackOk then
+    warn("[VOID HUB RECOVERY] Legacy loader ALSO failed: " .. tostring(_fallbackError))
+end
+-- Visible report so a user who cannot see the console knows which build ran.
+pcall(function()
+    if not _playerGui then return end
+    local _oldBanner = _playerGui:FindFirstChild("VoidHubBuildStatus")
+    if _oldBanner then _oldBanner:Destroy() end
+    local _screen = Instance.new("ScreenGui")
+    _screen.Name = "VoidHubBuildStatus"
+    _screen.ResetOnSpawn = false
+    _screen.DisplayOrder = 100002
+    _screen.IgnoreGuiInset = false
+    _screen.Parent = _playerGui
+    local _bar = Instance.new("TextLabel")
+    _bar.Name = "BuildRecoveryMessage"
+    _bar.Size = UDim2.fromOffset(570, 70)
+    _bar.Position = UDim2.new(0.5, -285, 0, 10)
+    _bar.BackgroundColor3 = Color3.fromRGB(31, 31, 39)
+    _bar.TextColor3 = Color3.fromRGB(255, 245, 230)
+    _bar.BorderSizePixel = 0
+    _bar.Font = Enum.Font.GothamBold
+    _bar.TextSize = 15
+    _bar.TextWrapped = true
+    _bar.Text = _fallbackOk
+        and "VOID HUB: New build failed. Stable hub restored. Check executor console for error. Counter TP unavailable."
+        or "VOID HUB: Both versions failed. Check executor console for errors."
+    _bar.Parent = _screen
+    local _corner = Instance.new("UICorner")
+    _corner.CornerRadius = UDim.new(0, 12)
+    _corner.Parent = _bar
+    task.delay(22, function()
+        if _screen and _screen.Parent then _screen:Destroy() end
+    end)
+end)
