@@ -955,7 +955,7 @@ for _i = 1, #_codes do
 end
 -- Updated VOID HUB startup diagnostics. No legacy script is loaded.
 local _body = table.concat(_decoded)
--- Restore exact historical V2 Freeze V6+ Boost from 20c68fd8be49b6fac5b64daf189c316ce8781ba1.
+-- Restore the original Freeze V6 function from current V1 (995d6e01903633cff43b7af5a0fca05879e11e59).
 -- All non-Freeze modules remain from the present V2 compressed source.
 local _historicFreeze = [=====[
 local function StartAutoSendAccept()
@@ -964,23 +964,17 @@ local function StartAutoSendAccept()
         autoSendAcceptConnections[key] = nil
     end
 
-    -- FREEZE V6+ (BOOST): original V6 Heartbeat/round-robin request engine,
-    -- urgent incoming targets served first without more total requests.
+    -- FREEZE V6: react to close blacklist targets, input events and
+    -- respawns while preserving a fair, bounded remote-request budget.
     -- Server authority decides if a remote actually applies a freeze.
     -- Tiny configured intervals cannot exceed the Heartbeat frequency.
     local FREEZE_MAX_TRACKED_TARGETS = 500000 -- tracking ceiling only
-    local FREEZE_BATCH_INTERVAL = 0.0000000001 -- Heartbeat is actual cadence
-    local FREEZE_MAX_REQUESTS_PER_BATCH = 4 -- never exceed four per Heartbeat
-    local FREEZE_SUSTAINED_REQUESTS_PER_SECOND = 24 -- avoid server flood at 50 players
-    local FREEZE_REQUEST_BURST_CREDITS = 4
-    local FREEZE_PER_TARGET_RETRY_SECONDS = 1.20
-    local freezeCredits, lastFreezeCreditAt = FREEZE_REQUEST_BURST_CREDITS, os.clock()
-    local freezeLastAttempt = setmetatable({}, {__mode = "k"})
-    local MAX_PRIORITY_QUEUE = 96
-    local PRIORITY_REQUEUE_GAP = 0.04
-    local PROXIMITY_PRIORITY_RADIUS = 32
-    local PROXIMITY_CRITICAL_RADIUS = 14
-    local PROXIMITY_REQUEUE_GAP = 0.10
+    local FREEZE_BATCH_INTERVAL = 0.0000000001 -- user-requested threshold; Heartbeat limited
+    local FREEZE_MAX_REQUESTS_PER_BATCH = 4 -- existing network ceiling preserved
+    local MAX_PRIORITY_QUEUE = 64
+    local PRIORITY_REQUEUE_GAP = 0.08
+    local PROXIMITY_PRIORITY_RADIUS = 24
+    local PROXIMITY_REQUEUE_GAP = 0.22
     local priorityQueue = {}
     local queuedPriority = setmetatable({}, {__mode = "k"})
     local lastQueuedPriority = setmetatable({}, {__mode = "k"})
@@ -991,12 +985,11 @@ local function StartAutoSendAccept()
     local lastFreezeErrorAt = -math.huge
 
     local function isReadyFreezeTarget(other)
-        -- Roblox may stream distant character parts out of this client.
-        -- Select by the replicated Player list, not local HumanoidRootPart.
-        -- A target that has not spawned (or whose server-side character
-        -- is unavailable) can still be rejected by the server.
-        return other ~= nil and other ~= Player and other.Parent == Players
-            and not inPlayerList(State.Whitelist, other)
+        if not shouldFreezeTarget(other) then return false end
+        local character = other.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        local hum = character and character:FindFirstChildOfClass("Humanoid")
+        return root ~= nil and hum ~= nil and hum.Health > 0
     end
 
     -- Versions of the game can send Player, character, a body part,
@@ -1007,54 +1000,28 @@ local function StartAutoSendAccept()
             return Players:GetPlayerByUserId(math.floor(value))
         end
         if kind == "string" and value ~= "" then
-            -- Some carry notifications use exact UserId strings rather
-            -- than a Player Instance. Do not target an ambiguous name.
-            local direct = Players:FindFirstChild(value)
-            if direct then return direct end
-            local id = tonumber(value)
-            if id and id > 0 and id % 1 == 0 then
-                return Players:GetPlayerByUserId(id)
-            end
-            return nil
+            return Players:FindFirstChild(value)
         end
         if kind ~= "Instance" then return nil end
         if value:IsA("Player") then return value end
         if value:IsA("Model") then
             return Players:GetPlayerFromCharacter(value)
         end
-        if value:IsA("BasePart") or value:IsA("Attachment") then
+        if value:IsA("BasePart") then
             local model = value:FindFirstAncestorOfClass("Model")
             return model and Players:GetPlayerFromCharacter(model) or nil
         end
         return nil
     end
 
-    local function promoteFreezeTarget(target, now, ignoreGap, urgent)
-        if not target or not isReadyFreezeTarget(target) then return end
-        if queuedPriority[target] then
-            -- An actual new nearby threat must not sit at the end of an
-            -- older queue. Move it to the FRONT without sending duplicates.
-            if urgent then
-                for index, queued in ipairs(priorityQueue) do
-                    if queued == target then
-                        if index > 1 then
-                            table.remove(priorityQueue, index)
-                            table.insert(priorityQueue, 1, target)
-                        end
-                        break
-                    end
-                end
-            end
+    local function promoteFreezeTarget(target, now, ignoreGap)
+        if not target or not isReadyFreezeTarget(target)
+            or queuedPriority[target] or #priorityQueue >= MAX_PRIORITY_QUEUE then
             return
         end
-        if #priorityQueue >= MAX_PRIORITY_QUEUE then return end
         if not ignoreGap and now - (lastQueuedPriority[target] or -math.huge)
             < PRIORITY_REQUEUE_GAP then return end
-        if urgent then
-            table.insert(priorityQueue, 1, target)
-        else
-            priorityQueue[#priorityQueue + 1] = target
-        end
+        priorityQueue[#priorityQueue + 1] = target
         queuedPriority[target] = true
         lastQueuedPriority[target] = now
     end
@@ -1065,26 +1032,13 @@ local function StartAutoSendAccept()
             local requester = playerFromIncoming(select(i, ...))
             -- Received carry/invite notifications get the next available
             -- priority slot, but no more than one request per target/batch.
-            promoteFreezeTarget(requester, now, false, true)
+            promoteFreezeTarget(requester, now, false)
         end
     end
 
-    local function sendFreezeRequest(target, now)
-        -- Each request counts towards a bounded per-second budget.
-        -- Recent targets yield to others, so every eligible player is visited.
-        if freezeCredits < 1 or now - (freezeLastAttempt[target] or -math.huge)
-            < FREEZE_PER_TARGET_RETRY_SECONDS then
-            return false
-        end
-        freezeCredits -= 1
-        freezeLastAttempt[target] = now
-
-        -- Mark outgoing requests so the defensive listeners do not mistake
-        -- our own carry echo for someone grabbing us.
-        Gui:SetAttribute("FreezeOutgoingUntil", now + 0.16)
-        Gui:SetAttribute("FreezeOutboundAnyUntil", now + 0.16)
-        Gui:SetAttribute("FreezeOutboundUntil_" .. tostring(target.UserId), now + 0.38)
-
+    local function sendFreezeRequest(target)
+        -- Catch invalid/transient remote failures without spawning parallel
+        -- retry loops or consuming a second request for the same target.
         local ok, err = pcall(function()
             CarryRequest:FireServer(target, 1, 0, 1, 0, 180, 0)
         end)
@@ -1099,21 +1053,15 @@ local function StartAutoSendAccept()
         SendRequestGui.OnClientEvent:Connect(queueFreezePriority)
     autoSendAcceptConnections.carryIncoming =
         CarryStarted.OnClientEvent:Connect(queueFreezePriority)
-    -- An opponent whose character reloads is picked up by the existing
-    -- Heartbeat scan on its first ready frame; no polling loop per target.
 
     autoSendAcceptConnections.megaSpamLoop =
         RunService.Heartbeat:Connect(function(dt)
-            if isManualGrabWindow() then
+            if isManualGrabWindow() or not next(State.Blacklist) then
                 batchElapsed = FREEZE_BATCH_INTERVAL
                 table.clear(priorityQueue)
                 table.clear(queuedPriority)
                 table.clear(seenTargetCharacter)
                 table.clear(lastNearPriority)
-                table.clear(lastQueuedPriority)
-                table.clear(freezeLastAttempt)
-                freezeCredits = FREEZE_REQUEST_BURST_CREDITS
-                lastFreezeCreditAt = os.clock()
                 return
             end
             -- Bring, Forcefield, Anti Grab and Death TP are also users of
@@ -1133,14 +1081,6 @@ local function StartAutoSendAccept()
             batchElapsed = 0
 
             local now = os.clock()
-            freezeCredits = math.min(FREEZE_REQUEST_BURST_CREDITS,
-                freezeCredits + math.max(0, now - lastFreezeCreditAt)
-                    * FREEZE_SUSTAINED_REQUESTS_PER_SECOND)
-            lastFreezeCreditAt = now
-            if freezeCredits < 1
-                or now < (tonumber(Gui:GetAttribute(
-                    "ClassroomLoopSafetyUntil")) or 0) then return end
-
             local targets = {}
             local myChar = Player.Character
             local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
@@ -1150,22 +1090,18 @@ local function StartAutoSendAccept()
                     if seenTargetCharacter[candidate] ~= candidate.Character then
                         seenTargetCharacter[candidate] = candidate.Character
                         -- Prioritize a newly ready respawn immediately.
-                        promoteFreezeTarget(candidate, now, true, true)
+                        promoteFreezeTarget(candidate, now, true)
                     elseif myRoot and candidate.Character then
                         local theirRoot = candidate.Character:FindFirstChild("HumanoidRootPart")
-                        if theirRoot then
-                            local proximity =
-                                (theirRoot.Position - myRoot.Position).Magnitude
-                            if proximity <= PROXIMITY_PRIORITY_RADIUS
-                                and now - (lastNearPriority[candidate] or -math.huge)
-                                    >= PROXIMITY_REQUEUE_GAP then
-                                -- Really close targets are first in line;
-                                -- other blacklisted targets still receive
-                                -- the original V6 round-robin slot.
-                                promoteFreezeTarget(candidate, now, false,
-                                    proximity <= PROXIMITY_CRITICAL_RADIUS)
-                                lastNearPriority[candidate] = now
-                            end
+                        if theirRoot and
+                            (theirRoot.Position - myRoot.Position).Magnitude
+                                <= PROXIMITY_PRIORITY_RADIUS
+                            and now - (lastNearPriority[candidate] or -math.huge)
+                                >= PROXIMITY_REQUEUE_GAP then
+                            -- Near targets are served promptly, but at least
+                            -- one slot remains for other targets each batch.
+                            promoteFreezeTarget(candidate, now, false)
+                            lastNearPriority[candidate] = now
                         end
                     end
                     if #targets >= FREEZE_MAX_TRACKED_TARGETS then break end
@@ -1180,22 +1116,17 @@ local function StartAutoSendAccept()
                 return
             end
 
-            -- Original V6 rule: at most one request per distinct target
-            -- per Heartbeat. Always reserve a round-robin slot so urgent
-            -- targeting cannot starve other eligible blacklist entries.
-            local budget = math.min(FREEZE_MAX_REQUESTS_PER_BATCH,
-                #targets, math.floor(freezeCredits))
+            -- One request per distinct target in this batch. Leave one
+            -- slot for round-robin when there are multiple candidates,
+            -- so constant incoming signals cannot starve other targets.
+            local budget = math.min(FREEZE_MAX_REQUESTS_PER_BATCH, #targets)
             local sent, served = 0, {}
-            -- A priority player gets at most one slot. Reserve all other
-            -- slots for fair round-robin coverage across the full server.
-            local priorityBudget = budget >= 2 and 1 or 0
+            local priorityBudget = budget >= 2 and budget - 1 or budget
             while #priorityQueue > 0 and sent < priorityBudget do
                 local player = table.remove(priorityQueue, 1)
                 queuedPriority[player] = nil
-                if isReadyFreezeTarget(player) and
-                    now - (freezeLastAttempt[player] or -math.huge)
-                        >= FREEZE_PER_TARGET_RETRY_SECONDS then
-                    local ok = sendFreezeRequest(player, now)
+                if isReadyFreezeTarget(player) then
+                    local ok = sendFreezeRequest(player)
                     served[player] = true
                     sent += 1
                     if not ok then
@@ -1211,10 +1142,8 @@ local function StartAutoSendAccept()
                 local target = targets[nextTargetIndex]
                 nextTargetIndex += 1
                 checked += 1
-                if target and not served[target] and isReadyFreezeTarget(target)
-                    and now - (freezeLastAttempt[target] or -math.huge)
-                        >= FREEZE_PER_TARGET_RETRY_SECONDS then
-                    local ok = sendFreezeRequest(target, now)
+                if target and not served[target] and isReadyFreezeTarget(target) then
+                    local ok = sendFreezeRequest(target)
                     served[target] = true
                     sent += 1
                     if not ok then lastQueuedPriority[target] = os.clock() end
@@ -1237,20 +1166,14 @@ _body = string.sub(_body, 1, _freezeStart - 1) .. _historicFreeze
 
 -- Keep Freeze roster consistent with the all-server V6+ selection.
 local _rosterOld = "local eligible = shouldFreezeTarget(other)"
-local _rosterNew = "local eligible = other ~= player and not inPlayerList(State.Whitelist, other)"
+local _rosterNew = "local eligible = shouldFreezeTarget(other)"
 local _rosterAt, _rosterEnd = string.find(_body, _rosterOld, 1, true)
 if not _rosterAt then error("[VOID HUB Freeze] roster selector missing") end
 _body = string.sub(_body, 1, _rosterAt - 1) .. _rosterNew
     .. string.sub(_body, _rosterEnd + 1)
 local _rosterMessageOld = 'sampleText = next(State.Blacklist) and "No eligible players online"'
     .. '\n                or "Add players to Blacklist (or ALL)"'
-local _rosterMessageAt, _rosterMessageEnd = string.find(_body,
-    _rosterMessageOld, 1, true)
-if _rosterMessageAt then
-    _body = string.sub(_body, 1, _rosterMessageAt - 1)
-        .. 'sampleText = "No eligible players currently loaded"'
-        .. string.sub(_body, _rosterMessageEnd + 1)
-end
+-- V1 original message already explains how to enable ALL in the Blacklist.
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
