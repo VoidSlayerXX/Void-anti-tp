@@ -991,13 +991,12 @@ local function StartAutoSendAccept()
     local lastFreezeErrorAt = -math.huge
 
     local function isReadyFreezeTarget(other)
-        -- Full server scan. Protect self and whitelist regardless of Blacklist.
-        if not other or other == Player or other.Parent ~= Players
-            or inPlayerList(State.Whitelist, other) then return false end
-        local character = other.Character
-        local root = character and character:FindFirstChild("HumanoidRootPart")
-        local hum = character and character:FindFirstChildOfClass("Humanoid")
-        return root ~= nil and hum ~= nil and hum.Health > 0
+        -- Roblox may stream distant character parts out of this client.
+        -- Select by the replicated Player list, not local HumanoidRootPart.
+        -- A target that has not spawned (or whose server-side character
+        -- is unavailable) can still be rejected by the server.
+        return other ~= nil and other ~= Player and other.Parent == Players
+            and not inPlayerList(State.Whitelist, other)
     end
 
     -- Versions of the game can send Player, character, a body part,
