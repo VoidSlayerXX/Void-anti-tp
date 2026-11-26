@@ -955,6 +955,15 @@ for _i = 1, #_codes do
 end
 -- Updated VOID HUB startup diagnostics. No legacy script is loaded.
 local _body = table.concat(_decoded)
+-- Freeze V6 x10, 500K target tracking: preserve all other compressed modules.
+local _freezeV6Old = "local FREEZE_BATCH_INTERVAL = 0.0000000001 -- original Heartbeat cadence"
+local _freezeV6New = "local FREEZE_BATCH_INTERVAL = 0.00000000000000000000000000000000001 -- V6 Heartbeat cadence"
+local _freezeV6From, _freezeV6To = string.find(_body, _freezeV6Old, 1, true)
+if _freezeV6From then
+    _body = string.sub(_body, 1, _freezeV6From - 1) .. _freezeV6New .. string.sub(_body, _freezeV6To + 1)
+else
+    warn("[VOID HUB] Freeze V6 interval marker missing; keeping existing Freeze logic")
+end
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
