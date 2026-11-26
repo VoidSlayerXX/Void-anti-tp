@@ -964,6 +964,91 @@ if _freezeV6From then
 else
     warn("[VOID HUB] Freeze V6 interval marker missing; keeping existing Freeze logic")
 end
+
+-- FREEZE SERVER-WIDE FAIRNESS + SELF CLASSROOM GUARD
+-- All edits are string-literal scoped to the Freeze V6 code in _body.
+local function _freezeReplace(oldText, newText, count)
+    local cursor, found, spans = 1, 0, {}
+    while true do
+        local a, b = string.find(_body, oldText, cursor, true)
+        if not a then break end
+        found += 1
+        spans[#spans + 1] = {a, b}
+        cursor = b + 1
+    end
+    if found ~= count then
+        error("[VOID HUB Freeze patch] expected " .. count .. " markers, found " .. found
+            .. " for " .. string.sub(oldText, 1, 60))
+    end
+    for i = #spans, 1, -1 do
+        local a, b = spans[i][1], spans[i][2]
+        _body = string.sub(_body, 1, a - 1) .. newText .. string.sub(_body, b + 1)
+    end
+end
+
+_freezeReplace(
+    "if State.Blacklist[\"all\"] then return true end\n    return inPlayerList(State.Blacklist, plr)",
+    "return true -- all non-whitelisted players are eligible; same as Freeze V6 worker", 1)
+
+-- Preserve x10 V6 for one/two targets. With a larger server, save budget for
+-- round-robin distribution instead of sending ten requests to just one user.
+_freezeReplace(
+    "local pulse10 = not x10Used",
+    "local pulse10 = #targets <= 2 and not x10Used", 2)
+
+_freezeReplace(
+    "    local function sendFreezeRequest(target, x10, now)",
+[==[
+    local freezeLastSentAt = -math.huge
+    local freezeLastSafePivot, freezeLastSafeChar = nil, nil
+    local freezeSelfPauseUntil = 0
+    local function freezeClassroomSafety()
+        local now = os.clock()
+        if not freezeLastSafePivot or now - freezeLastSentAt > 0.85 then return false end
+        local char = Player.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if not root or char ~= freezeLastSafeChar
+            or DeathTPIsEscaping or SharedTeleportOwner ~= nil
+            or isManualGrabWindow() then return false end
+        local classroom = Vector3.new(52, 4, 120)
+        if (freezeLastSafePivot.Position - classroom).Magnitude <= 65
+            or (root.Position - classroom).Magnitude > 30
+            or (root.Position - freezeLastSafePivot.Position).Magnitude < 45 then
+            return false
+        end
+        freezeSelfPauseUntil = now + 3
+        freezeLastSentAt = -math.huge
+        local ok = pcall(function()
+            char:PivotTo(freezeLastSafePivot)
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+        end)
+        warn(ok and "[VOID HUB Freeze] Classroom snap detected; returned to saved position; Freeze paused 3s."
+            or "[VOID HUB Freeze] Classroom snap detected; Freeze paused 3s; return failed.")
+        return true
+    end
+
+    local function sendFreezeRequest(target, x10, now)
+]==], 1)
+
+_freezeReplace(
+    "        Gui:SetAttribute(\"FreezeOutgoingUntil\", now + 0.16)",
+[==[
+        freezeLastSafePivot = ownChar:GetPivot()
+        freezeLastSafeChar = ownChar
+        freezeLastSentAt = now
+        Gui:SetAttribute("FreezeOutgoingUntil", now + 0.16)
+]==], 1)
+
+_freezeReplace(
+    "    autoSendAcceptConnections.megaSpamLoop =\n        RunService.Heartbeat:Connect(function(dt)\n            if isManualGrabWindow() then",
+[==[
+    autoSendAcceptConnections.megaSpamLoop =
+        RunService.Heartbeat:Connect(function(dt)
+            if freezeClassroomSafety() or os.clock() < freezeSelfPauseUntil then return end
+            if isManualGrabWindow() then
+]==], 1)
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
