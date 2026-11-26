@@ -985,11 +985,10 @@ local function StartAutoSendAccept()
     local lastFreezeErrorAt = -math.huge
 
     local function isReadyFreezeTarget(other)
-        if not shouldFreezeTarget(other) then return false end
-        local character = other.Character
-        local root = character and character:FindFirstChild("HumanoidRootPart")
-        local hum = character and character:FindFirstChildOfClass("Humanoid")
-        return root ~= nil and hum ~= nil and hum.Health > 0
+        -- Remote players may be streamed out of local physics view.
+        -- Their Player objects remain in Players:GetPlayers().
+        return other ~= nil and other ~= Player and other.Parent == Players
+            and shouldFreezeTarget(other)
     end
 
     -- Versions of the game can send Player, character, a body part,
@@ -1037,8 +1036,12 @@ local function StartAutoSendAccept()
     end
 
     local function sendFreezeRequest(target)
-        -- Catch invalid/transient remote failures without spawning parallel
-        -- retry loops or consuming a second request for the same target.
+        -- Mark the exact outgoing target before sending, so Anti-Grab can
+        -- distinguish its own outgoing echo from a hostile incoming grab.
+        local now = os.clock()
+        Gui:SetAttribute("FreezeOutgoingUntil", now + 0.16)
+        Gui:SetAttribute("FreezeOutboundAnyUntil", now + 0.16)
+        Gui:SetAttribute("FreezeOutboundUntil_" .. tostring(target.UserId), now + 0.38)
         local ok, err = pcall(function()
             CarryRequest:FireServer(target, 1, 0, 1, 0, 180, 0)
         end)
@@ -1067,11 +1070,20 @@ local function StartAutoSendAccept()
             -- Bring, Forcefield, Anti Grab and Death TP are also users of
             -- CarryRequest. Freeze yields during their teleport sequences,
             -- preventing multiple remotes from moving our own avatar.
-            if DeathTPIsEscaping or SharedTeleportOwner ~= nil
-                or Gui:GetAttribute("AntiGrabRecovering") == true
-                or (Gui:GetAttribute("ClassicAntiGrabEnabled") == true
-                    and os.clock() < (tonumber(
-                        Gui:GetAttribute("AntiGrabPriorityUntil")) or 0))
+            -- Anti-Grab ON / recovering flags must not stop Freeze.
+            -- Only pause while physically held or another teleport owns
+            -- the local character. This avoids self-Classroom feedback.
+            local myChar = Player.Character
+            local myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+            local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+            local actuallyHeld = Gui:GetAttribute("ClassicAntiGrabEnabled") == true
+                and myHum and myRoot
+                and (myRoot.Anchored or myHum.PlatformStand
+                    or (myHum.Sit and myHum.SeatPart == nil))
+            if DeathTPIsEscaping
+                or (SharedTeleportOwner ~= nil
+                    and SharedTeleportOwner ~= "AntiGrab")
+                or actuallyHeld
                 or os.clock() < SharedTeleportCooldownUntil then
                 batchElapsed = FREEZE_BATCH_INTERVAL
                 return
