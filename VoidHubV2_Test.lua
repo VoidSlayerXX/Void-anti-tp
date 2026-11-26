@@ -955,99 +955,248 @@ for _i = 1, #_codes do
 end
 -- Updated VOID HUB startup diagnostics. No legacy script is loaded.
 local _body = table.concat(_decoded)
--- Freeze V6 x10, 500K target tracking: preserve all other compressed modules.
-local _freezeV6Old = "local FREEZE_BATCH_INTERVAL = 0.0000000001 -- original Heartbeat cadence"
-local _freezeV6New = "local FREEZE_BATCH_INTERVAL = 0.00000000000000000000000000000000001 -- V6 Heartbeat cadence"
-local _freezeV6From, _freezeV6To = string.find(_body, _freezeV6Old, 1, true)
-if _freezeV6From then
-    _body = string.sub(_body, 1, _freezeV6From - 1) .. _freezeV6New .. string.sub(_body, _freezeV6To + 1)
-else
-    warn("[VOID HUB] Freeze V6 interval marker missing; keeping existing Freeze logic")
-end
-
--- FREEZE SERVER-WIDE FAIRNESS + SELF CLASSROOM GUARD
--- All edits are string-literal scoped to the Freeze V6 code in _body.
-local function _freezeReplace(oldText, newText, count)
-    local cursor, found, spans = 1, 0, {}
-    while true do
-        local a, b = string.find(_body, oldText, cursor, true)
-        if not a then break end
-        found += 1
-        spans[#spans + 1] = {a, b}
-        cursor = b + 1
+-- Restore exact historical V2 Freeze V6+ Boost from 20c68fd8be49b6fac5b64daf189c316ce8781ba1.
+-- All non-Freeze modules remain from the present V2 compressed source.
+local _historicFreeze = [=====[
+local function StartAutoSendAccept()
+    for key, conn in pairs(autoSendAcceptConnections) do
+        if conn then pcall(function() conn:Disconnect() end) end
+        autoSendAcceptConnections[key] = nil
     end
-    if found ~= count then
-        error("[VOID HUB Freeze patch] expected " .. count .. " markers, found " .. found
-            .. " for " .. string.sub(oldText, 1, 60))
+
+    -- FREEZE V6+ (BOOST): original V6 Heartbeat/round-robin request engine,
+    -- urgent incoming targets served first without more total requests.
+    -- Server authority decides if a remote actually applies a freeze.
+    -- Tiny configured intervals cannot exceed the Heartbeat frequency.
+    local FREEZE_MAX_TRACKED_TARGETS = 500000 -- tracking ceiling only
+    local FREEZE_BATCH_INTERVAL = 0.0000000001 -- Heartbeat is actual cadence
+    local FREEZE_MAX_REQUESTS_PER_BATCH = 4 -- safety ceiling unchanged
+    local MAX_PRIORITY_QUEUE = 96
+    local PRIORITY_REQUEUE_GAP = 0.04
+    local PROXIMITY_PRIORITY_RADIUS = 32
+    local PROXIMITY_CRITICAL_RADIUS = 14
+    local PROXIMITY_REQUEUE_GAP = 0.10
+    local priorityQueue = {}
+    local queuedPriority = setmetatable({}, {__mode = "k"})
+    local lastQueuedPriority = setmetatable({}, {__mode = "k"})
+    local lastNearPriority = setmetatable({}, {__mode = "k"})
+    local seenTargetCharacter = setmetatable({}, {__mode = "k"})
+    local batchElapsed = FREEZE_BATCH_INTERVAL
+    local nextTargetIndex = 1
+    local lastFreezeErrorAt = -math.huge
+
+    local function isReadyFreezeTarget(other)
+        if not shouldFreezeTarget(other) then return false end
+        local character = other.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        local hum = character and character:FindFirstChildOfClass("Humanoid")
+        return root ~= nil and hum ~= nil and hum.Health > 0
     end
-    for i = #spans, 1, -1 do
-        local a, b = spans[i][1], spans[i][2]
-        _body = string.sub(_body, 1, a - 1) .. newText .. string.sub(_body, b + 1)
-    end
-end
 
-_freezeReplace(
-    "if State.Blacklist[\"all\"] then return true end\n    return inPlayerList(State.Blacklist, plr)",
-    "return true -- all non-whitelisted players are eligible; same as Freeze V6 worker", 1)
-
--- Preserve x10 V6 for one/two targets. With a larger server, save budget for
--- round-robin distribution instead of sending ten requests to just one user.
-_freezeReplace(
-    "local pulse10 = not x10Used",
-    "local pulse10 = #targets <= 2 and not x10Used", 2)
-
-_freezeReplace(
-    "    local function sendFreezeRequest(target, x10, now)",
-[==[
-    local freezeLastSentAt = -math.huge
-    local freezeLastSafePivot, freezeLastSafeChar = nil, nil
-    local freezeSelfPauseUntil = 0
-    local function freezeClassroomSafety()
-        local now = os.clock()
-        if not freezeLastSafePivot or now - freezeLastSentAt > 0.85 then return false end
-        local char = Player.Character
-        local root = char and char:FindFirstChild("HumanoidRootPart")
-        if not root or char ~= freezeLastSafeChar
-            or DeathTPIsEscaping or SharedTeleportOwner ~= nil
-            or isManualGrabWindow() then return false end
-        local classroom = Vector3.new(52, 4, 120)
-        if (freezeLastSafePivot.Position - classroom).Magnitude <= 65
-            or (root.Position - classroom).Magnitude > 30
-            or (root.Position - freezeLastSafePivot.Position).Magnitude < 45 then
-            return false
+    -- Versions of the game can send Player, character, a body part,
+    -- UserId, or an exact username in incoming carry notifications.
+    local function playerFromIncoming(value)
+        local kind = typeof(value)
+        if kind == "number" and value > 0 then
+            return Players:GetPlayerByUserId(math.floor(value))
         end
-        freezeSelfPauseUntil = now + 3
-        freezeLastSentAt = -math.huge
-        local ok = pcall(function()
-            char:PivotTo(freezeLastSafePivot)
-            root.AssemblyLinearVelocity = Vector3.zero
-            root.AssemblyAngularVelocity = Vector3.zero
-        end)
-        warn(ok and "[VOID HUB Freeze] Classroom snap detected; returned to saved position; Freeze paused 3s."
-            or "[VOID HUB Freeze] Classroom snap detected; Freeze paused 3s; return failed.")
-        return true
+        if kind == "string" and value ~= "" then
+            -- Some carry notifications use exact UserId strings rather
+            -- than a Player Instance. Do not target an ambiguous name.
+            local direct = Players:FindFirstChild(value)
+            if direct then return direct end
+            local id = tonumber(value)
+            if id and id > 0 and id % 1 == 0 then
+                return Players:GetPlayerByUserId(id)
+            end
+            return nil
+        end
+        if kind ~= "Instance" then return nil end
+        if value:IsA("Player") then return value end
+        if value:IsA("Model") then
+            return Players:GetPlayerFromCharacter(value)
+        end
+        if value:IsA("BasePart") or value:IsA("Attachment") then
+            local model = value:FindFirstAncestorOfClass("Model")
+            return model and Players:GetPlayerFromCharacter(model) or nil
+        end
+        return nil
     end
 
-    local function sendFreezeRequest(target, x10, now)
-]==], 1)
+    local function promoteFreezeTarget(target, now, ignoreGap, urgent)
+        if not target or not isReadyFreezeTarget(target) then return end
+        if queuedPriority[target] then
+            -- An actual new nearby threat must not sit at the end of an
+            -- older queue. Move it to the FRONT without sending duplicates.
+            if urgent then
+                for index, queued in ipairs(priorityQueue) do
+                    if queued == target then
+                        if index > 1 then
+                            table.remove(priorityQueue, index)
+                            table.insert(priorityQueue, 1, target)
+                        end
+                        break
+                    end
+                end
+            end
+            return
+        end
+        if #priorityQueue >= MAX_PRIORITY_QUEUE then return end
+        if not ignoreGap and now - (lastQueuedPriority[target] or -math.huge)
+            < PRIORITY_REQUEUE_GAP then return end
+        if urgent then
+            table.insert(priorityQueue, 1, target)
+        else
+            priorityQueue[#priorityQueue + 1] = target
+        end
+        queuedPriority[target] = true
+        lastQueuedPriority[target] = now
+    end
 
-_freezeReplace(
-    "        Gui:SetAttribute(\"FreezeOutgoingUntil\", now + 0.16)",
-[==[
-        freezeLastSafePivot = ownChar:GetPivot()
-        freezeLastSafeChar = ownChar
-        freezeLastSentAt = now
-        Gui:SetAttribute("FreezeOutgoingUntil", now + 0.16)
-]==], 1)
+    local function queueFreezePriority(...)
+        local now = os.clock()
+        for i = 1, select("#", ...) do
+            local requester = playerFromIncoming(select(i, ...))
+            -- Received carry/invite notifications get the next available
+            -- priority slot, but no more than one request per target/batch.
+            promoteFreezeTarget(requester, now, false, true)
+        end
+    end
 
-_freezeReplace(
-    "    autoSendAcceptConnections.megaSpamLoop =\n        RunService.Heartbeat:Connect(function(dt)\n            if isManualGrabWindow() then",
-[==[
+    local function sendFreezeRequest(target)
+        -- Catch invalid/transient remote failures without spawning parallel
+        -- retry loops or consuming a second request for the same target.
+        local ok, err = pcall(function()
+            CarryRequest:FireServer(target, 1, 0, 1, 0, 180, 0)
+        end)
+        if not ok and os.clock() - lastFreezeErrorAt > 2 then
+            lastFreezeErrorAt = os.clock()
+            warn("[VOID HUB Freeze] CarryRequest failed: " .. tostring(err))
+        end
+        return ok
+    end
+
+    autoSendAcceptConnections.acceptIncoming =
+        SendRequestGui.OnClientEvent:Connect(queueFreezePriority)
+    autoSendAcceptConnections.carryIncoming =
+        CarryStarted.OnClientEvent:Connect(queueFreezePriority)
+    -- An opponent whose character reloads is picked up by the existing
+    -- Heartbeat scan on its first ready frame; no polling loop per target.
+
     autoSendAcceptConnections.megaSpamLoop =
         RunService.Heartbeat:Connect(function(dt)
-            if freezeClassroomSafety() or os.clock() < freezeSelfPauseUntil then return end
-            if isManualGrabWindow() then
-]==], 1)
+            if isManualGrabWindow() or not next(State.Blacklist) then
+                batchElapsed = FREEZE_BATCH_INTERVAL
+                table.clear(priorityQueue)
+                table.clear(queuedPriority)
+                table.clear(seenTargetCharacter)
+                table.clear(lastNearPriority)
+                table.clear(lastQueuedPriority)
+                return
+            end
+            -- Bring, Forcefield, Anti Grab and Death TP are also users of
+            -- CarryRequest. Freeze yields during their teleport sequences,
+            -- preventing multiple remotes from moving our own avatar.
+            if DeathTPIsEscaping or SharedTeleportOwner ~= nil
+                or Gui:GetAttribute("AntiGrabRecovering") == true
+                or (Gui:GetAttribute("ClassicAntiGrabEnabled") == true
+                    and os.clock() < (tonumber(
+                        Gui:GetAttribute("AntiGrabPriorityUntil")) or 0))
+                or os.clock() < SharedTeleportCooldownUntil then
+                batchElapsed = FREEZE_BATCH_INTERVAL
+                return
+            end
+            batchElapsed += math.clamp(tonumber(dt) or 0, 0, 0.25)
+            if batchElapsed < FREEZE_BATCH_INTERVAL then return end
+            batchElapsed = 0
+
+            local now = os.clock()
+            local targets = {}
+            local myChar = Player.Character
+            local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+            for _, candidate in Players:GetPlayers() do
+                if isReadyFreezeTarget(candidate) then
+                    targets[#targets + 1] = candidate
+                    if seenTargetCharacter[candidate] ~= candidate.Character then
+                        seenTargetCharacter[candidate] = candidate.Character
+                        -- Prioritize a newly ready respawn immediately.
+                        promoteFreezeTarget(candidate, now, true, true)
+                    elseif myRoot and candidate.Character then
+                        local theirRoot = candidate.Character:FindFirstChild("HumanoidRootPart")
+                        if theirRoot then
+                            local proximity =
+                                (theirRoot.Position - myRoot.Position).Magnitude
+                            if proximity <= PROXIMITY_PRIORITY_RADIUS
+                                and now - (lastNearPriority[candidate] or -math.huge)
+                                    >= PROXIMITY_REQUEUE_GAP then
+                                -- Really close targets are first in line;
+                                -- other blacklisted targets still receive
+                                -- the original V6 round-robin slot.
+                                promoteFreezeTarget(candidate, now, false,
+                                    proximity <= PROXIMITY_CRITICAL_RADIUS)
+                                lastNearPriority[candidate] = now
+                            end
+                        end
+                    end
+                    if #targets >= FREEZE_MAX_TRACKED_TARGETS then break end
+                else
+                    seenTargetCharacter[candidate] = nil
+                    lastNearPriority[candidate] = nil
+                end
+            end
+            if #targets == 0 then
+                table.clear(priorityQueue)
+                table.clear(queuedPriority)
+                return
+            end
+
+            -- Original V6 rule: at most one request per distinct target
+            -- per Heartbeat. Always reserve a round-robin slot so urgent
+            -- targeting cannot starve other eligible blacklist entries.
+            local budget = math.min(FREEZE_MAX_REQUESTS_PER_BATCH, #targets)
+            local sent, served = 0, {}
+            local priorityBudget = budget >= 2 and budget - 1 or budget
+            while #priorityQueue > 0 and sent < priorityBudget do
+                local player = table.remove(priorityQueue, 1)
+                queuedPriority[player] = nil
+                if isReadyFreezeTarget(player) then
+                    local ok = sendFreezeRequest(player)
+                    served[player] = true
+                    sent += 1
+                    if not ok then
+                        -- Try a different target in the next batch rather than
+                        -- retrying the same failed remote in this frame.
+                        lastQueuedPriority[player] = os.clock()
+                    end
+                end
+            end
+            local checked = 0
+            while sent < budget and checked < #targets do
+                if nextTargetIndex > #targets then nextTargetIndex = 1 end
+                local target = targets[nextTargetIndex]
+                nextTargetIndex += 1
+                checked += 1
+                if target and not served[target] and isReadyFreezeTarget(target) then
+                    local ok = sendFreezeRequest(target)
+                    served[target] = true
+                    sent += 1
+                    if not ok then lastQueuedPriority[target] = os.clock() end
+                end
+            end
+        end)
+end
+
+]=====]
+local _freezeStartMarker = "local function StartAutoSendAccept()"
+local _freezeEndMarker = "\nlocal function StopAutoSendAccept()"
+local _freezeStart = string.find(_body, _freezeStartMarker, 1, true)
+local _freezeEnd = _freezeStart and string.find(_body, _freezeEndMarker,
+    _freezeStart + #_freezeStartMarker, true) or nil
+if not _freezeStart or not _freezeEnd then
+    error("[VOID HUB] Historical Freeze V6+ module boundary not found")
+end
+_body = string.sub(_body, 1, _freezeStart - 1) .. _historicFreeze
+    .. string.sub(_body, _freezeEnd)
 
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
