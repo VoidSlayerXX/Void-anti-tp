@@ -1567,6 +1567,50 @@ do
         .. string.sub(_body, _to)
 end
 
+-- Bring ALL V2 whitelist-inclusion fix; only this Bring feature is patched.
+do
+    local _startTag = '    local card = makeFeatureCard(page, "Bring / Carry", 0)'
+    local _endTag = '    -- Anti Grab V181:'
+    local _from = string.find(_body, _startTag, 1, true)
+    local _to = _from and string.find(_body, _endTag,
+        _from + #_startTag, true)
+    if not _from or not _to then
+        error("[VOID HUB Bring ALL] feature markers missing")
+    end
+    local _bringBlock = string.sub(_body, _from, _to - 1)
+    local _edits = {
+        { [==[        -- ALL means every available player except self and Whitelist;
+        -- the Blacklist is used by other targeted tools, not ALL mode.
+        if not other or other == Player or other.Parent ~= Players
+            or isBringProtected(other) then return false end]==], [==[        -- ALL includes every available player, including Whitelist.
+        -- Self is still excluded; single-target Bring remains protected.
+        if not other or other == Player or other.Parent ~= Players then
+            return false
+        end]==] },
+        { [==[        rules.Text = ("BRING ALL: every online player except you and Whitelist. Blacklist does not restrict ALL.\n" ..]==], [==[        rules.Text = ("BRING ALL: every available player except you, INCLUDING Whitelist. Blacklist does not restrict ALL.\n" ..]==] },
+        { [==[        if not target or target == Player or target.Parent ~= Players
+            or isBringProtected(target) then
+            return false, "Player unavailable or protected by Whitelist."
+        end]==], [==[        -- Whitelist protects named/single Bring and GYMBAN.
+        -- While ALL is actively running, include Whitelist in this queue.
+        if not target or target == Player or target.Parent ~= Players
+            or (isBringProtected(target) and not sendingAll) then
+            return false, "Player unavailable or protected by Whitelist."
+        end]==] },
+        { [==[                status.Text = "No eligible Bring targets after Whitelist protection and Blacklist filtering."]==], [==[                status.Text = "No available Bring targets online (other than yourself)."]==] },
+    }
+    for _, edit in ipairs(_edits) do
+        local first, last = string.find(_bringBlock, edit[1], 1, true)
+        if not first or string.find(_bringBlock, edit[1], last + 1, true) then
+            error("[VOID HUB Bring ALL] ambiguous whitelist patch")
+        end
+        _bringBlock = string.sub(_bringBlock, 1, first - 1)
+            .. edit[2] .. string.sub(_bringBlock, last + 1)
+    end
+    _body = string.sub(_body, 1, _from - 1)
+        .. _bringBlock .. string.sub(_body, _to)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
