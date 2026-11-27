@@ -2235,6 +2235,24 @@ do
     _body = string.sub(_body, 1, _from-1) .. _ct .. string.sub(_body, _to)
 end
 
+-- V2 script access grant: thiaga14barr (execution access, not combat whitelist).
+-- Keep the original owner approved and preserve all existing modules.
+do
+    local _before = [==[local SCRIPT_ACCESS_WHITELIST = {
+    ["kaximbojorge"] = true,
+}]==]
+    local _after = [==[local SCRIPT_ACCESS_WHITELIST = {
+    ["kaximbojorge"] = true,
+    ["thiaga14barr"] = true,
+}]==]
+    local _a, _b = string.find(_body, _before, 1, true)
+    if not _a or string.find(_body, _before, _b + 1, true) then
+        error("[VOID HUB V2 ACCESS] whitelist patch target missing/ambiguous")
+    end
+    _body = string.sub(_body, 1, _a - 1)
+        .. _after .. string.sub(_body, _b + 1)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
