@@ -3173,6 +3173,122 @@ do
         .. _ab .. string.sub(_body, _b)
 end
 
+
+-- BRING ALL V3: UP TO 50 PLAYERS, TWO PER 0.2S TARGET PACE
+-- V2 only. Two serialized remote handoffs per nominal 0.20-second pair
+-- (one player each 0.10 seconds, only when remotes and recovery are ready).
+-- Game-server replication/throttling can slow or refuse individual moves.
+-- Freeze, Auto Block, Auto Decline, Anti-Grab and single Bring unchanged.
+do
+    local _begin = [==[    local card = makeFeatureCard(page, "Bring / Carry", 0)]==]
+    local _end = [==[    -- Anti Grab V181:]==]
+    local _from = string.find(_body, _begin, 1, true)
+    local _to = _from and string.find(_body, _end, _from + #_begin, true)
+    if not _from or not _to then
+        error("[VOID HUB Bring ALL V3] module missing")
+    end
+    local _block = string.sub(_body, _from, _to - 1)
+    local _edits = {
+        { [==[    local BRING_ALL_INTERVAL = 0.20 -- minimum start-to-start interval per ALL target
+    local BRING2_CARRY_WAIT = 0.08]==],
+          [==[    local BRING_ALL_INTERVAL = 0.10 -- 2 target starts / nominal 0.20s
+    local BRING_ALL_PAIR_INTERVAL = 0.20
+    local BRING_ALL_MAX_PLAYERS = 50
+    -- Only ALL uses the faster handoff. Server may require slower pacing.
+    local BRING_ALL_CARRY_WAIT = 0.055
+    local BRING_ALL_TELEPORT_WAIT = 0.030
+    local BRING2_CARRY_WAIT = 0.08]==] },
+        { [==[            task.wait(gymbanMode and GYMBAN_CARRY_WAIT or BRING2_CARRY_WAIT)]==],
+          [==[            task.wait(gymbanMode and GYMBAN_CARRY_WAIT
+                or (sendingAll and BRING_ALL_CARRY_WAIT or BRING2_CARRY_WAIT))]==] },
+        { [==[            task.wait(gymbanMode and GYMBAN_EVENT_WAIT
+                or BRING2_TELEPORT_WAIT)]==],
+          [==[            task.wait(gymbanMode and GYMBAN_EVENT_WAIT
+                or (sendingAll and BRING_ALL_TELEPORT_WAIT
+                    or BRING2_TELEPORT_WAIT))]==] },
+        { [==[            for _, other in ipairs(Players:GetPlayers()) do
+                if shouldBringAllTarget(other) then
+                    table.insert(targets, other)
+                end
+            end
+            table.sort(targets, function(a, b) return a.Name:lower() < b.Name:lower() end)]==],
+          [==[            -- Select up to 50 online non-whitelisted players. Do not
+            -- lose a candidate merely because they are respawning this frame.
+            for _, other in ipairs(Players:GetPlayers()) do
+                if other ~= Player and other.Parent == Players
+                    and not isBringProtected(other) then
+                    table.insert(targets, other)
+                end
+            end
+            table.sort(targets, function(a, b) return a.Name:lower() < b.Name:lower() end)
+            while #targets > BRING_ALL_MAX_PLAYERS do
+                table.remove(targets)
+            end]==] },
+        { [==[                local nextBringAllRequestAt = 0
+                for i, other in ipairs(targets) do
+                    if rev ~= activeRevision or not sendingAll or not Gui.Parent then break end
+                    if not shouldBringAllTarget(other) then]==],
+          [==[                local nextBringAllRequestAt = 0
+                local nextBringAllPairAt = 0
+                for i, other in ipairs(targets) do
+                    if rev ~= activeRevision or not sendingAll or not Gui.Parent then break end
+                    -- A player who is just respawning gets a bounded chance
+                    -- to load rather than disappearing from the ALL roster.
+                    if not shouldBringAllTarget(other)
+                        and other.Parent == Players
+                        and not isBringProtected(other) then
+                        local spawnDeadline = os.clock() + 0.85
+                        while rev == activeRevision and sendingAll and Gui.Parent
+                            and other.Parent == Players and not isBringProtected(other)
+                            and not shouldBringAllTarget(other)
+                            and os.clock() < spawnDeadline do
+                            task.wait(0.04)
+                        end
+                    end
+                    if not shouldBringAllTarget(other) then]==] },
+        { [==[                                and now >= nextBringAllRequestAt
+                                and not isManualGrabWindow() and not DeathTPIsEscaping then]==],
+          [==[                                and now >= nextBringAllRequestAt
+                                -- First of each pair cannot start before its
+                                -- 0.20-second batch window. Second uses
+                                -- the 0.10-second individual handoff slot.
+                                and (i % 2 == 0 or now >= nextBringAllPairAt)
+                                and not isManualGrabWindow() and not DeathTPIsEscaping then]==] },
+        { [==[                                -- Mark the request start, not its completion:
+                                -- one new target at least every 0.2s, when ready.
+                                nextBringAllRequestAt = os.clock() + BRING_ALL_INTERVAL
+                                local ok = tryBringSequence(other, false, nil, desired)
+                                if ok then completed += 1 else failed += 1 end]==],
+          [==[                                -- Remote calls remain SERIAL: never interleave
+                                -- two Carry/Teleport/Stop sequences. Pairs
+                                -- are scheduled at 0.00/0.10 seconds, but any
+                                -- real server or recovery delay takes priority.
+                                local startedAt = os.clock()
+                                if i % 2 == 1 then
+                                    nextBringAllPairAt = startedAt + BRING_ALL_PAIR_INTERVAL
+                                end
+                                nextBringAllRequestAt = startedAt + BRING_ALL_INTERVAL
+                                local ok, reason = tryBringSequence(other, false, nil, desired)
+                                if ok then completed += 1 else failed += 1 end
+                                print(("[VOID HUB BRING ALL V3] %d/%d %s sent=%s %s")
+                                    :format(i, #targets, other.Name, tostring(ok),
+                                        tostring(reason or "")))]==] },
+        { [==[                        status.Text = ("ALL (0.2s/player): %d requests sent | %d failed | %d unavailable | %d selected. BRING cancels.")]==],
+          [==[                        status.Text = ("ALL (2/0.2s target): %d sent | %d failed | %d unavailable | %d/%d selected. BRING cancels.")]==] },
+    }
+    for _, edit in ipairs(_edits) do
+        local i, j = string.find(_block, edit[1], 1, true)
+        if not i or string.find(_block, edit[1], j + 1, true) then
+            error("[VOID HUB Bring ALL V3] incompatible patch: "
+                .. string.sub(edit[1], 1, 75))
+        end
+        _block = string.sub(_block, 1, i - 1)
+            .. edit[2] .. string.sub(_block, j + 1)
+    end
+    _body = string.sub(_body, 1, _from - 1)
+        .. _block .. string.sub(_body, _to)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
