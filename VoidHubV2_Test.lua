@@ -1386,6 +1386,77 @@ do
         .. _counterBlock .. string.sub(_body, _to)
 end
 
+-- Counter TP F9 hit tracker (diagnostics only): no behavioral changes.
+do
+    local _fromTag = "-- DEFENSE: COUNTER TP (TARGETED CARRY/EVENT, NO BUBBLE)"
+    local _toTag = "-- VOID HUB V1 / UNIFIED COMMAND CENTER LAYOUT"
+    local _from = string.find(_body, _fromTag, 1, true)
+    local _to = _from and string.find(_body, _toTag, _from + #_fromTag, true)
+    if not _from or not _to then error("[VOID HUB F9] Counter module missing") end
+    local _counter = string.sub(_body, _from, _to - 1)
+    local _logEdits = {
+        {[==[    local confirmedClassroomArrivals = 0]==], [==[    local confirmedClassroomArrivals = 0
+    -- Read-only F9 telemetry. No extra remotes, no delays, no target changes.
+    local function f9HitTracker(eventName, target, detail)
+        local who = target and (target.Name .. " / " .. target.DisplayName
+            .. " (UserId " .. tostring(target.UserId) .. ")") or "UNKNOWN"
+        print(("[VOID HUB HIT TRACKER][%.3f] %s | %s%s")
+            :format(os.clock(), tostring(eventName), who,
+                detail and (" | " .. tostring(detail)) or ""))
+    end]==]},
+        {[==[            if not target then
+                if not retry then]==], [==[            if not retry then
+                f9HitTracker("HIT_SEEN", target, "type=" .. tostring(signal)
+                    .. " dmg=" .. tostring(damage or 0)
+                    .. " source=" .. tostring(reason))
+            end
+            if not target then
+                if not retry then]==]},
+        {[==[            table.insert(hitQueue, {target = target, at = now, signal = signal})
+            Gui:SetAttribute("CounterTPHitPending", true)]==], [==[            table.insert(hitQueue, {target = target, at = now, signal = signal})
+            f9HitTracker("QUEUED", target, "type=" .. tostring(signal)
+                .. " queue=" .. tostring(#hitQueue))
+            Gui:SetAttribute("CounterTPHitPending", true)]==]},
+        {[==[            carry:FireServer(target, round(offset.X), round(offset.Y),
+                round(offset.Z), 0, 0, 0)
+            didCarry = true]==], [==[            carry:FireServer(target, round(offset.X), round(offset.Y),
+                round(offset.Z), 0, 0, 0)
+            didCarry = true
+            f9HitTracker("CARRY_SENT", target, ("%.3fs after queued"):format(
+                os.clock() - (lastQueuedForTarget[target.UserId] or os.clock())))]==]},
+        {[==[                ev:FireServer()
+                didEvent = true]==], [==[                ev:FireServer()
+                didEvent = true
+                f9HitTracker("CLASSROOM_REQUEST_SENT", target,
+                    "server result not yet confirmed")]==]},
+        {[==[                    confirmedClassroomArrivals += 1
+                    render(target.Name ..]==], [==[                    confirmedClassroomArrivals += 1
+                    f9HitTracker("ARRIVAL_OBSERVED", target,
+                        "target appeared in Classroom")
+                    render(target.Name ..]==]},
+        {[==[                elseif selfMovedToClassroom then
+                    consecutiveSelfOnly += 1]==], [==[                elseif selfMovedToClassroom then
+                    f9HitTracker("SELF_MOVED_INSTEAD", target,
+                        "your avatar was moved; target arrival not confirmed")
+                    consecutiveSelfOnly += 1]==]},
+        {[==[                    local moved = (otherRoot.Position - targetBefore).Magnitude
+                    render((]==], [==[                    local moved = (otherRoot.Position - targetBefore).Magnitude
+                    f9HitTracker("ARRIVAL_UNCONFIRMED", target,
+                        ("moved %.1f studs"):format(moved))
+                    render((]==]},
+    }
+    for _, pair in ipairs(_logEdits) do
+        local first, last = string.find(_counter, pair[1], 1, true)
+        if not first or string.find(_counter, pair[1], last + 1, true) then
+            error("[VOID HUB F9] ambiguous diagnostic insert")
+        end
+        _counter = string.sub(_counter, 1, first - 1)
+            .. pair[2] .. string.sub(_counter, last + 1)
+    end
+    _body = string.sub(_body, 1, _from - 1) .. _counter
+        .. string.sub(_body, _to)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
