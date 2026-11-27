@@ -1313,8 +1313,8 @@ do
         { [==[    local MAX_HIT_QUEUE = 8]==], [==[    local MAX_HIT_QUEUE = 8
     -- One actual impact may replicate as damage + stagger + animation.
     -- Merge only the same attack's echoes, not later distinct hits.
-    local COUNTER_IMPACT_ECHO_SECONDS = 0.42
-    local COUNTER_CROSS_TARGET_ECHO_SECONDS = 0.10
+    local COUNTER_IMPACT_ECHO_SECONDS = 0.18
+    local COUNTER_CROSS_TARGET_ECHO_SECONDS = 0.05
     local lastQueuedForTarget = {}
     local lastQueuedAnyAt = -math.huge]==] },
         { [==[            if retry then unresolvedHitId += 1 end
