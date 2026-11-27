@@ -1605,6 +1605,246 @@ do
         .. _block .. string.sub(_body, _to)
 end
 
+-- TP WALK V2 SMOOTH WALL PASS: local constrained wall noclip + pre-physics movement.
+-- Scoped to TP Walk alone; other modules and their toggles are unchanged.
+do
+    local _start = [==[-- TP WALK V118 - ground + air boost, including manual G carries.]==]
+    local _stop = [==[-- MOVEMENT: NO SLOW (V68)]==]
+    local _from = string.find(_body, _start, 1, true)
+    local _to = _from and string.find(_body, _stop, _from + #_start, true)
+    if not _from or not _to then error("[VOID HUB TP WALK] module boundaries missing") end
+    local _walk = string.sub(_body, _from, _to - 1)
+    local _edits = {
+        { [==[    local toggle = Instance.new("TextButton")
+    toggle.Name = "TPWalkToggle"]==], [==[    -- Lightweight local wall pass. Only collision with nearby vertical
+    -- map parts is disabled; floor collision, gravity and jumping stay on.
+    -- A bounded query maintains contact while inside a wall. Never scan
+    -- Workspace:GetDescendants() or turn the whole character CanCollide off.
+    local wallPass = {
+        character = nil, folder = nil, links = {}, count = 0,
+        ownParts = {}, nextSweep = 0
+    }
+    local WALL_PASS_MAX_PARTS = 18
+    local wallRayParams = RaycastParams.new()
+    wallRayParams.FilterType = Enum.RaycastFilterType.Exclude
+    wallRayParams.RespectCanCollide = true
+    local wallOverlapParams = OverlapParams.new()
+    wallOverlapParams.FilterType = Enum.RaycastFilterType.Exclude
+    wallOverlapParams.RespectCanCollide = true
+    wallOverlapParams.MaxParts = 72
+
+    local function clearWallPass()
+        if wallPass.folder then
+            pcall(function() wallPass.folder:Destroy() end)
+        end
+        wallPass.character, wallPass.folder = nil, nil
+        table.clear(wallPass.links)
+        table.clear(wallPass.ownParts)
+        wallPass.count = 0
+        wallPass.nextSweep = 0
+    end
+
+    local function initializeWallPass(character)
+        if wallPass.character == character then return end
+        clearWallPass()
+        wallPass.character = character
+        wallPass.folder = Instance.new("Folder")
+        wallPass.folder.Name = "VoidHub_TPWalk_WallPass"
+        wallPass.folder.Parent = character
+        for _, part in ipairs(character:GetChildren()) do
+            if part:IsA("BasePart")
+                and (part.CanCollide or part.Name == "HumanoidRootPart") then
+                wallPass.ownParts[#wallPass.ownParts + 1] = part
+            end
+        end
+        wallRayParams.FilterDescendantsInstances = {character}
+        wallOverlapParams.FilterDescendantsInstances = {character}
+    end
+
+    local function allowedWall(part, root, character)
+        if not part or not part:IsA("BasePart")
+            or not part.Parent or not part.CanCollide
+            or part == workspace.Terrain
+            or part:IsDescendantOf(character) then
+            return false
+        end
+        -- Do not ghost the ground under the avatar. Only consider parts
+        -- rising into the character's torso-level horizontal path.
+        if part.Position.Y + part.Size.Y * 0.5
+            <= root.Position.Y - 1.55 then return false end
+        local owner = part:FindFirstAncestorOfClass("Model")
+        if owner and owner:FindFirstChildOfClass("Humanoid") then
+            return false
+        end
+        return true
+    end
+
+    local function releaseWallLink(part)
+        local entry = wallPass.links[part]
+        if not entry then return end
+        for _, link in ipairs(entry.links) do
+            pcall(function() link:Destroy() end)
+        end
+        wallPass.links[part] = nil
+        wallPass.count = math.max(0, wallPass.count - 1)
+    end
+
+    local function retainWallPart(part, character, root, now)
+        if not allowedWall(part, root, character) then return end
+        local entry = wallPass.links[part]
+        if entry then
+            entry.expiresAt = now + 0.48
+            return
+        end
+        if wallPass.count >= WALL_PASS_MAX_PARTS
+            or not wallPass.folder or not wallPass.folder.Parent then return end
+        local links = {}
+        for _, ownPart in ipairs(wallPass.ownParts) do
+            if ownPart.Parent and (ownPart.CanCollide
+                or ownPart.Name == "HumanoidRootPart") then
+                local link = Instance.new("NoCollisionConstraint")
+                link.Name = "TPWalkWallPass"
+                link.Part0 = ownPart
+                link.Part1 = part
+                link.Parent = wallPass.folder
+                links[#links + 1] = link
+            end
+        end
+        if #links > 0 then
+            wallPass.links[part] = {links = links, expiresAt = now + 0.48}
+            wallPass.count += 1
+        end
+    end
+
+    local function refreshWallPass(character, root, now, direction, distance)
+        initializeWallPass(character)
+        -- Immediate short forward probes let the collision links activate
+        -- on the FIRST frame of contact, even at high movement speed.
+        if direction then
+            local ray = direction * (distance + 4.0)
+            for _, yOffset in ipairs({0.65, -1.0}) do
+                local hit = workspace:Raycast(
+                    root.Position + Vector3.new(0, yOffset, 0),
+                    ray, wallRayParams)
+                if hit then retainWallPart(hit.Instance, character, root, now) end
+            end
+        end
+        if now < wallPass.nextSweep then return end
+        wallPass.nextSweep = now + 0.09
+        -- Release constraints behind us; never leave noclip enabled on OFF.
+        for part, entry in pairs(wallPass.links) do
+            if not part.Parent or now >= entry.expiresAt then
+                releaseWallLink(part)
+            end
+        end
+        -- Local overlap is needed when a ray starts INSIDE a wall.
+        -- Fixed small query prevents crowded maps from spiking FPS.
+        local ok, parts = pcall(function()
+            return workspace:GetPartBoundsInBox(root.CFrame,
+                Vector3.new(7, 6.5, 7), wallOverlapParams)
+        end)
+        if ok and parts then
+            for _, part in ipairs(parts) do
+                retainWallPart(part, character, root, now)
+            end
+        end
+    end
+
+    local toggle = Instance.new("TextButton")
+    toggle.Name = "TPWalkToggle"]==] },
+        { [==[            .. "WalkSpeed unchanged; smooth boost without rollback pauses."]==], [==[            .. "WalkSpeed unchanged; local wall pass and smooth pre-physics movement."]==] },
+        { [==[        if not enabled then clearGhost() end]==], [==[        if not enabled then
+            clearGhost()
+            clearWallPass()
+        end]==] },
+        { [==[    -- Bounded, continuous TP Walk; no rollback-induced freeze window.
+    bindGlobal(RunService.Heartbeat, function(dt)]==], [==[    -- Move BEFORE physics to reduce post-simulation CFrame jitter.
+    -- Bounded, continuous TP Walk; no rollback-induced freeze window.
+    bindGlobal(RunService.PreSimulation, function(dt)]==] },
+        { [==[        if character ~= lastBoostCharacter then
+            clearGhost()
+            lastBoostCharacter = character]==], [==[        if character ~= lastBoostCharacter then
+            clearGhost()
+            clearWallPass()
+            lastBoostCharacter = character]==] },
+        { [==[        if horizontal.Magnitude < 0.05 then
+            lastBoostPosition, lastBoostDirection = nil, nil
+            return
+        end]==], [==[        if horizontal.Magnitude < 0.05 then
+            -- Keep passing through a wall when standing still inside it.
+            refreshWallPass(character, root, now, nil, 0)
+            lastBoostPosition, lastBoostDirection = nil, nil
+            return
+        end]==] },
+        { [==[        -- Players and interactive shop displays aren't static walls.
+        -- Don't stop TP Walk just because their body/item intersects the
+        -- forward ray. Recast with a tiny exclusion list (max 7 iterations).
+        local cast = RaycastParams.new()
+        cast.FilterType = Enum.RaycastFilterType.Exclude
+        cast.RespectCanCollide = true
+        local ignored = {character}
+        -- Ignore only the host of each *visible* prompt in the forward
+        -- obstruction test. E remains fully usable for buying/morphing.
+        for prompt in pairs(shownPrompts) do
+            if prompt.Parent and prompt.Enabled then
+                local host = prompt.Parent
+                if host:IsA("Attachment") then host = host.Parent end
+                if host and host:IsA("BasePart") then
+                    ignored[#ignored+1] = host
+                end
+            end
+        end
+        local obstacle = nil
+        for _ = 1, 7 do
+            cast.FilterDescendantsInstances = ignored
+            obstacle = workspace:Raycast(
+                root.Position + Vector3.new(0, 0.5, 0),
+                unitDirection * (distance + 0.75), cast)
+            if not obstacle then break end
+            local hit = obstacle.Instance
+            local model = hit:FindFirstAncestorOfClass("Model")
+            -- Dynamic characters are not static walls. Prompts are already
+            -- cached from PromptShown, so never traverse model hierarchies.
+            local movingCharacter = model and model:FindFirstChildOfClass("Humanoid")
+            if movingCharacter then
+                ignored[#ignored+1] = model or hit
+            else
+                break
+            end
+        end
+        -- Slide along actual walls instead of cancelling ALL movement on
+        -- the first wall ray. Normal wall component is blocked; tangential
+        -- movement remains smooth. Gravity and character yaw are unchanged.
+        if obstacle and obstacle.Distance < distance + 0.65
+            and obstacle.Normal.Y < 0.45 then
+            local wallNormal = obstacle.Normal
+            local towardWall = unitDirection:Dot(wallNormal)
+            if towardWall < 0 then
+                local slide = unitDirection - wallNormal * towardWall
+                local clearance = math.max(0, obstacle.Distance - 0.60)
+                step = unitDirection * math.min(distance, clearance)
+                    + slide * math.max(0, distance - clearance)
+            end
+        end]==], [==[        -- Do not raycast-stop or wall-slide. Add only local map-wall
+        -- collision exclusions; retain normal floor physics.
+        refreshWallPass(character, root, now, unitDirection, distance)]==] },
+        { [==[        clearGhost()
+        table.clear(shownPrompts)]==], [==[        clearGhost()
+        clearWallPass()
+        table.clear(shownPrompts)]==] },
+    }
+    for _, edit in ipairs(_edits) do
+        local startPos, endPos = string.find(_walk, edit[1], 1, true)
+        if not startPos or string.find(_walk, edit[1], endPos + 1, true) then
+            error("[VOID HUB TP WALK] incompatible movement patch")
+        end
+        _walk = string.sub(_walk, 1, startPos - 1)
+            .. edit[2] .. string.sub(_walk, endPos + 1)
+    end
+    _body = string.sub(_body, 1, _from - 1)
+        .. _walk .. string.sub(_body, _to)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
