@@ -2776,8 +2776,11 @@ do
                 target, reason = findAttacker(hum, root)
             end
             local simultaneousTargets = nil
-            if actualDamage and not retry then
-                local matched = collectConcurrentAttackers(root, now)
+            if actualDamage or retry then
+                -- Recheck the ORIGINAL damage timestamp on short retries:
+                -- multiple players' animations may replicate after HP loss.
+                local impactTime = retry and lastDamageAt or now
+                local matched = collectConcurrentAttackers(root, impactTime)
                 if #matched >= 2 then
                     -- Each target has independent attack-animation evidence
                     -- near the SAME actual HP-loss event.
