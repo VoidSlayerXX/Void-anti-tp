@@ -2023,6 +2023,107 @@ do
         .. string.sub(_body, _to)
 end
 
+-- V2 TP WALK FREE MOVE AND FORCEFIELD FIVE PLAYER BURSTS
+-- Movement stays active during outgoing FF handoffs; actual immobilization
+-- and other teleport owners remain guarded. FF queues five contacts rapidly
+-- but uses serial server remotes to avoid cross-target carry corruption.
+do
+    local function _editFeature(startMarker, endMarker, changes, label)
+        local st = string.find(_body, startMarker, 1, true)
+        local en = st and string.find(_body, endMarker, st + #startMarker, true)
+        if not st or not en then error("[VOID HUB " .. label .. "] feature missing") end
+        local part = string.sub(_body, st, en - 1)
+        for _, pair in ipairs(changes) do
+            local i, j = string.find(part, pair[1], 1, true)
+            if not i or string.find(part, pair[1], j+1, true) then
+                error("[VOID HUB " .. label .. "] patch conflicted")
+            end
+            part = string.sub(part, 1, i-1) .. pair[2] .. string.sub(part, j+1)
+        end
+        _body = string.sub(_body, 1, st-1) .. part .. string.sub(_body, en)
+    end
+    _editFeature(
+        [==[-- V2 FORCEFIELD V119: radius-based sequential push intervals, safe self-return.]==],
+        [==[-- V2 only: Counter TP uses the working Anti-Grab targeted classroom]==],
+        {
+            { [==[        local CONTINUOUS_CONTACT_REARM_SECONDS = 0.65 -- repeat while still inside]==], [==[        local CONTINUOUS_CONTACT_REARM_SECONDS = 0.55 -- repeat while still inside]==] },
+            { [==[        local lastRequestAt = -math.huge
+        local nearbyCount = 0]==], [==[        local lastRequestAt = -math.huge
+        -- Detect all contacts; process up to five targets in a rapid
+        -- serial burst. Concurrent CarryRequest/Event calls would share
+        -- the same server carry state and can teleport the wrong player.
+        local MAX_BURST_TARGETS = 5
+        local BURST_WINDOW_SECONDS = 0.65
+        local burstWindowStartedAt = -math.huge
+        local burstCount = 0
+        local nearbyCount = 0]==] },
+            { [==[        local function pushInterval()
+            return 0.07
+        end
+        local RELEASE_SETTLE_SECONDS = 0.07 -- bounded settle between different targets]==], [==[        local function pushInterval()
+            return 0.035
+        end
+        local RELEASE_SETTLE_SECONDS = 0.025 -- short settle between distinct targets]==] },
+            { [==[                :format(note, radius, nearbyCount, #pendingTargets,
+                    requestCount, recovery.count, PUSH_EXTRA_STUDS)
+            status.Text = status.Text]==], [==[                :format(note, radius, nearbyCount, #pendingTargets,
+                    requestCount, recovery.count, PUSH_EXTRA_STUDS)
+            status.Text = status.Text
+                .. (" | 5-player rapid bursts")]==] },
+            { [==[            table.clear(pendingTargets)
+            Gui:SetAttribute("ForcefieldContactPending", false)]==], [==[            table.clear(pendingTargets)
+            burstCount, burstWindowStartedAt = 0, -math.huge
+            Gui:SetAttribute("ForcefieldContactPending", false)]==] },
+            { [==[                        SharedTeleportCooldownUntil, os.clock() + 0.04)]==], [==[                        SharedTeleportCooldownUntil, os.clock() + 0.01)]==] },
+            { [==[                task.wait(0.08) -- match normal Bring V196 carry handoff]==], [==[                task.wait(0.055) -- rapid serial carry handoff; do not overlap owners]==] },
+            { [==[                    task.wait(0.05) -- match Bring V196 teleport handoff]==], [==[                    task.wait(0.025) -- shorter target handoff before StopCarry]==] },
+            { [==[                and now - lastRequestAt >= pushInterval() then]==], [==[                and now - lastRequestAt >= pushInterval()
+                -- Five contacts can be served in one short window, then
+                -- later entrants continue on the next bounded burst.
+                and (burstCount < MAX_BURST_TARGETS
+                    or now - burstWindowStartedAt >= BURST_WINDOW_SECONDS) then]==] },
+            { [==[                lastRequestAt = now
+                lastTargetRequest[entry.player.UserId] = now]==], [==[                if now - burstWindowStartedAt >= BURST_WINDOW_SECONDS then
+                    burstWindowStartedAt = now
+                    burstCount = 0
+                end
+                burstCount += 1
+                lastRequestAt = now
+                lastTargetRequest[entry.player.UserId] = now]==] },
+        }, "Forcefield")
+    _editFeature(
+        [==[-- TP WALK V118 - ground + air boost, including manual G carries.]==],
+        [==[-- MOVEMENT: NO SLOW (V68)]==],
+        {
+            { [==[        if MovementOrbitActive or DeathTPIsEscaping
+            or SharedTeleportOwner ~= nil or root.Anchored]==], [==[        if MovementOrbitActive or DeathTPIsEscaping
+            -- An outgoing Forcefield push doesn't mean we are grabbed.
+            -- Keep TP Walk running during that short shared-remote handoff.
+            or (SharedTeleportOwner ~= nil
+                and SharedTeleportOwner ~= "Forcefield")
+            or root.Anchored]==] },
+            { [==[            or Gui:GetAttribute("OutgoingBringActive") == true
+            or Gui:GetAttribute("AntiGrabRecovering") == true then]==], [==[            or Gui:GetAttribute("OutgoingBringActive") == true then]==] },
+            { [==[        -- Grab animations and some shop prompts consume MoveDirection.
+        -- Read physically held WASD only while G/outgoing carry is active
+        -- or a visible E prompt is present, never from stale input.
+        if horizontal.Magnitude < 0.05
+            and (manualGCarryWindow or next(shownPrompts) ~= nil)
+            and UIS:GetFocusedTextBox() == nil then]==], [==[        -- Control scripts can briefly lose MoveDirection while combat,
+        -- prompts or another animation runs. Use LIVE WASD input as backup
+        -- even without a G carry; never use cached/stale movement keys.
+        if horizontal.Magnitude < 0.05
+            and UIS:GetFocusedTextBox() == nil then]==] },
+            { [==[                    boostScale = math.max(0.88, boostScale * 0.97)]==], [==[                    -- Do not noticeably slow movement after a transient
+                    -- correction: preserve momentum and let anti-TP guards
+                    -- handle only actual unsafe teleports.
+                    boostScale = math.max(0.98, boostScale * 0.995)]==] },
+            { [==[        boostScale = manualGCarryWindow and 1
+            or math.min(1, boostScale + delta * 6.0)]==], [==[        boostScale = manualGCarryWindow and 1
+            or math.min(1, boostScale + delta * 12.0)]==] },
+        }, "TP Walk")
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
