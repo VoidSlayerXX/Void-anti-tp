@@ -3046,6 +3046,133 @@ do
         }, "Auto Decline Bring TP V189")
 end
 
+
+-- AUTO BLOCK V4: MULTI-ATTACK COMBO GUARD + HP LOSS TELEMETRY
+-- Only the Auto Block block is patched. Freeze V6, Counter TP V9,
+-- Auto Decline V189, Anti-Grab, and normal movement remain untouched.
+do
+    local _fromTag = [==[-- DEFENSE: AUTO BLOCK V187 - HELD REAL F BLOCK (NO FAKE HP)]==]
+    local _toTag = [==[-- Duplicate Defense Autodecline panel removed in V56.]==]
+    local _a = string.find(_body, _fromTag, 1, true)
+    local _b = _a and string.find(_body, _toTag, _a + #_fromTag, true)
+    if not _a or not _b then error("[VOID HUB Auto Block V4] module boundaries missing") end
+    local _ab = string.sub(_body, _a, _b - 1)
+    local _edits = {
+        { [==[    local REACTIVE_BLOCK_PULSE = 0.11
+    local REACTIVE_BLOCK_COOLDOWN = 0.22
+    local reactiveGuardUntil = -math.huge
+    local lastReactiveGuardAt = -math.huge
+    local reactiveOpponentRecords = {}]==],
+          [==[    -- Favor continuous defense through quick combos, without
+    -- tapping F repeatedly or changing normal held-F block behavior.
+    local REACTIVE_BLOCK_PULSE = 0.19
+    local REACTIVE_BLOCK_COOLDOWN = 0.055
+    local reactiveGuardUntil = -math.huge
+    local lastReactiveGuardAt = -math.huge
+    local reactivePulseSerial = 0
+    local lastReactiveCueAt = setmetatable({}, {__mode = "k"})
+    local reactiveOpponentRecords = {}]==] },
+        { [==[        if record.characterConn then record.characterConn:Disconnect() end
+        reactiveOpponentRecords[other] = nil]==],
+          [==[        if record.characterConn then record.characterConn:Disconnect() end
+        reactiveOpponentRecords[other] = nil
+        lastReactiveCueAt[other] = nil]==] },
+        { [==[            or not isPunching() or keyDown
+            or manualFDown or manualGDown]==],
+          [==[            or not isPunching()
+            or manualFDown or manualGDown]==] },
+        { [==[            or (theirs.Position - ownRoot.Position).Magnitude > REACTIVE_BLOCK_RADIUS
+            or os.clock() - lastReactiveGuardAt < REACTIVE_BLOCK_COOLDOWN then]==],
+          [==[            or (theirs.Position - ownRoot.Position).Magnitude > REACTIVE_BLOCK_RADIUS then]==] },
+        { [==[        local revision = tapRevision
+        local ok = pressF(revision, true)
+        if not ok then return end
+        local now = os.clock()
+        lastReactiveGuardAt = now
+        reactiveGuardUntil = now + REACTIVE_BLOCK_PULSE
+        print("[VOID HUB AUTO BLOCK V3] Reactive F: " .. style
+            .. " / " .. other.Name .. " / id=" .. id)
+        task.delay(REACTIVE_BLOCK_PULSE, function()
+            if not alive or not enabled
+                or revision ~= tapRevision then return end
+            -- A short pulse while punching. If punching ended, normal
+            -- standing F block takes ownership and can stay held.
+            if isPunching() then releaseF(false, revision) end
+        end)]==],
+          [==[        local now = os.clock()
+        -- Deduplicate fast echoes from ONE player's same animation.
+        -- Separate attackers may extend the current guard independently.
+        if now - (lastReactiveCueAt[other] or -math.huge) < 0.04 then
+            return
+        end
+        lastReactiveCueAt[other] = now
+        local revision = tapRevision
+        if keyDown then
+            -- Another known-style attack arrived during our existing
+            -- reactive F hold. Extend it instead of pressing F again.
+            if now >= reactiveGuardUntil then return end
+        else
+            if now - lastReactiveGuardAt < REACTIVE_BLOCK_COOLDOWN then
+                return
+            end
+            local ok = pressF(revision, true)
+            if not ok then return end
+        end
+        lastReactiveGuardAt = now
+        reactiveGuardUntil = math.max(
+            reactiveGuardUntil, now + REACTIVE_BLOCK_PULSE)
+        reactivePulseSerial += 1
+        local pulse = reactivePulseSerial
+        print("[VOID HUB AUTO BLOCK V4] Reactive F: " .. style
+            .. " / " .. other.Name .. " / id=" .. id)
+        -- One logical guard window extends across overlapping attackers.
+        -- Older callbacks cannot release a newer F hold.
+        task.spawn(function()
+            while alive and enabled and revision == tapRevision
+                and pulse == reactivePulseSerial
+                and os.clock() < reactiveGuardUntil do
+                task.wait(0.02)
+            end
+            if not alive or not enabled
+                or revision ~= tapRevision
+                or pulse ~= reactivePulseSerial then return end
+            -- Manual F/G and actual punches retain their input priority.
+            -- Standing block stays held by the original Heartbeat.
+            if isPunching() and not manualFDown and not manualGDown then
+                releaseF(false, revision)
+            end
+        end)]==] },
+        { [==[        -- No HealthChanged spoof: F is the real damage reduction mechanism.
+        table.insert(characterConnections, humanoid.Died:Connect(function()]==],
+          [==[        -- Diagnostic only: determine whether damage arrives with F
+        -- genuinely held or inside our reactive protection window.
+        -- Never rewrite health. The server owns the damage calculation.
+        local lastMeasuredHealth = humanoid.Health
+        table.insert(characterConnections, humanoid.HealthChanged:Connect(function(hp)
+            if hp < lastMeasuredHealth - 0.1 then
+                print(("[VOID HUB AUTO BLOCK V4] HP -%.1f | F held=%s | reactive=%s | punching=%s")
+                    :format(lastMeasuredHealth - hp,
+                        tostring(keyDown or manualFDown),
+                        tostring(os.clock() <= reactiveGuardUntil),
+                        tostring(isPunching())))
+            end
+            lastMeasuredHealth = hp
+        end))
+        table.insert(characterConnections, humanoid.Died:Connect(function()]==] },
+    }
+    for _, edit in ipairs(_edits) do
+        local i, j = string.find(_ab, edit[1], 1, true)
+        if not i or string.find(_ab, edit[1], j + 1, true) then
+            error("[VOID HUB Auto Block V4] incompatible patch: "
+                .. string.sub(edit[1], 1, 65))
+        end
+        _ab = string.sub(_ab, 1, i - 1) .. edit[2]
+            .. string.sub(_ab, j + 1)
+    end
+    _body = string.sub(_body, 1, _a - 1)
+        .. _ab .. string.sub(_body, _b)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
