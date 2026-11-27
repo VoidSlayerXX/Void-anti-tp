@@ -3711,6 +3711,35 @@ do
     _body = string.sub(_body, 1, _from - 1) .. _ff .. string.sub(_body, _to)
 end
 
+
+-- FORCEFIELD V7: CAP RADIUS TO 40 STUDS
+-- V2 Forcefield only: 3-40 range, including applied/saved radius values.
+-- Leave wave size, shared handoff, recovery and all other modules unchanged.
+do
+    local _start = [==[-- V2 FORCEFIELD V119: radius-based sequential push intervals, safe self-return.]==]
+    local _stop = [==[-- V2 only: Counter TP uses the working Anti-Grab targeted classroom]==]
+    local _a = string.find(_body, _start, 1, true)
+    local _b = _a and string.find(_body, _stop, _a + #_start, true)
+    if not _a or not _b then error("[VOID HUB Forcefield V7] section missing") end
+    local _ff = string.sub(_body, _a, _b - 1)
+    local _edits = {
+        { [==[        lbl.Text = "Radius (3-50):"]==], [==[        lbl.Text = "Radius (3-40):"]==] },
+        { [==[        field.Text, field.PlaceholderText = "5", "3-50"]==], [==[        field.Text, field.PlaceholderText = "5", "3-40"]==] },
+        { [==[                render("Enter a valid number of studs, from 3 to 50.")]==], [==[                render("Enter a valid number of studs, from 3 to 40.")]==] },
+        { [==[            radius = math.clamp(math.floor(n + 0.5), 3, 50)]==], [==[            radius = math.clamp(math.floor(n + 0.5), 3, 40)]==] },
+        { [==[        -- 3-10 studs: 1 sec, 11-19 studs: 2 sec, 20-50 studs: 3 sec.]==], [==[        -- Valid Forcefield bubble radius is 3-40 studs (fling safety cap).]==] }
+    }
+    for _, edit in ipairs(_edits) do
+        local i, j = string.find(_ff, edit[1], 1, true)
+        if not i or string.find(_ff, edit[1], j+1, true) then
+            error("[VOID HUB Forcefield V7] range patch mismatch")
+        end
+        _ff = string.sub(_ff, 1, i - 1)
+            .. edit[2] .. string.sub(_ff, j+1)
+    end
+    _body = string.sub(_body, 1, _a - 1) .. _ff .. string.sub(_body, _b)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
