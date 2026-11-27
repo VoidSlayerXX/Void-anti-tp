@@ -2919,6 +2919,133 @@ do
         .. _module .. string.sub(_body, _to)
 end
 
+
+-- AUTO DECLINE V189: QUICK REJECT + INCOMING BRING TP RECOVERY
+-- V2 ONLY. Historical Freeze V6, Counter TP and Auto Block are unchanged.
+-- Change ONLY the two Auto Decline function bodies after decoding.
+do
+    local function patchDeclineSection(startMarker, endMarker, edits, moduleName)
+        local a = string.find(_body, startMarker, 1, true)
+        local b = a and string.find(_body, endMarker, a + #startMarker, true)
+        if not a or not b then error("[VOID HUB " .. moduleName .. "] section missing") end
+        local section = string.sub(_body, a, b - 1)
+        for _, pair in ipairs(edits) do
+            local i, j = string.find(section, pair[1], 1, true)
+            if not i or string.find(section, pair[1], j + 1, true) then
+                error("[VOID HUB " .. moduleName .. "] incompatible patch: "
+                    .. string.sub(pair[1], 1, 65))
+            end
+            section = string.sub(section, 1, i - 1)
+                .. pair[2] .. string.sub(section, j + 1)
+        end
+        _body = string.sub(_body, 1, a - 1)
+            .. section .. string.sub(_body, b)
+    end
+
+    patchDeclineSection(
+        "local function StartAutoDecline()",
+        "local function StopAutoDecline()",
+        {
+            { [==[    local RECOVER_WINDOW = 2.80 -- catch late repeated server-side locks
+    local MAX_RECOVERY_CHAIN_SECONDS = 4.80 -- bounded, never an infinite pin
+    local GET_UP_COOLDOWN = 0.060
+    local MIN_REJECT_INTERVAL = 0.050 -- bounded retries, not every frame
+    local CLASSIC_GRACE = 0.12 -- preserve working Anti Grab detection
+    local MAX_RETURN_CORRECTIONS = 9]==],
+              [==[    -- Faster confirmed carry/lock response; still capped and event-driven.
+    local RECOVER_WINDOW = 3.40
+    local MAX_RECOVERY_CHAIN_SECONDS = 6.00
+    local GET_UP_COOLDOWN = 0.050
+    local MIN_REJECT_INTERVAL = 0.035
+    local CLASSIC_GRACE = 0.12 -- Anti Grab remains the first responder.
+    local MAX_RETURN_CORRECTIONS = 12]==] },
+            { [==[        for _, delaySeconds in ipairs({0.016, 0.05, 0.11, 0.23, 0.40, 0.68, 1.10, 1.80, 2.40}) do
+            task.delay(delaySeconds, function()
+                if not active or token ~= current
+                    or player.Character ~= char then return end
+                releaseCharacter(saved)
+            end)
+        end
+    end
+
+    autoDeclineConnections.safepoint = RunService.Heartbeat:Connect(function(dt)]==],
+              [==[        for _, delaySeconds in ipairs({0.016, 0.04, 0.08, 0.15, 0.28, 0.48, 0.80, 1.35, 2.10, 3.00}) do
+            task.delay(delaySeconds, function()
+                if not active or token ~= current
+                    or player.Character ~= char then return end
+                releaseCharacter(saved)
+            end)
+        end
+        -- A real incoming carry can re-lock us after the first decline.
+        -- Only retry while the same character is STILL physically held.
+        -- Do not spam on ordinary invitations or touch our outgoing Bring.
+        if confirmedIncoming then
+            for _, delaySeconds in ipairs({0.045, 0.12, 0.26}) do
+                task.delay(delaySeconds, function()
+                    if not active or token ~= current
+                        or player.Character ~= char
+                        or not declineProtectionEnabled()
+                        or isOwnAction(false) then return end
+                    local h = char and char:FindFirstChildOfClass("Humanoid")
+                    local r = char and char:FindFirstChild("HumanoidRootPart")
+                    if not h or not r or h.Health <= 0 then return end
+                    local state = h:GetState()
+                    local held = r.Anchored or h.PlatformStand
+                        or (h.Sit and h.SeatPart == nil)
+                        or state == Enum.HumanoidStateType.Physics
+                        or state == Enum.HumanoidStateType.Ragdoll
+                    if held and os.clock() - lastReject >= MIN_REJECT_INTERVAL then
+                        rejectCarry(false)
+                    end
+                end)
+            end
+        end
+    end
+
+    autoDeclineConnections.safepoint = RunService.Heartbeat:Connect(function(dt)]==] },
+        }, "Auto Decline V189")
+
+    patchDeclineSection(
+        "local function StartAutoDeclineRequests()",
+        "local function StopAutoDeclineRequests()",
+        {
+            { [==[    local CHECK_INTERVAL = 0.016 -- idle scan near every Heartbeat
+    local RETRY_INTERVAL = 0.050 -- coalesced with main bounded reject handler
+    local INCOMING_WINDOW = 2.8
+    local ACTIVE_REACTION_SECONDS = 2.8
+    local SAFE_SPOT_AGE = 1.8]==],
+              [==[    local CHECK_INTERVAL = 0.012 -- Heartbeat-limited
+    local RETRY_INTERVAL = 0.035 -- shared reject rate; no extra remote loop
+    local INCOMING_WINDOW = 3.4
+    local ACTIVE_REACTION_SECONDS = 3.4
+    local SAFE_SPOT_AGE = 2.2]==] },
+            { [==[    local INCOMING_SNAP_MIN = 2.6
+    local INCOMING_SNAP_SPEED = 75]==],
+              [==[    -- More sensitive only after an actual incoming event/lock.
+    -- Preserve normal TP Walk and our own outgoing Bring exclusions.
+    local INCOMING_SNAP_MIN = 2.2
+    local INCOMING_SNAP_SPEED = 60]==] },
+            { [==[        if unexpectedSnap then
+            -- One rollback for this abrupt movement only. There is no
+            -- repeated PivotTo while the player walks or presses keys.
+            undoForcedSnap(now, char, root, previousPivot)
+            rejectBounded(now)]==],
+              [==[        if unexpectedSnap then
+            -- For a confirmed incoming Bring, prefer the PRE-REQUEST spot
+            -- over a frame that may already be inside a chained teleport.
+            -- No anchoring or persistent position lock during normal walking.
+            local rewindPivot = previousPivot
+            if incomingRecently and incomingCharacter == char
+                and incidentPivot and now - lastIncomingAt <= 1.4
+                and (currentPosition - incidentPivot.Position).Magnitude
+                    >= math.max(3, minStep) then
+                rewindPivot = incidentPivot
+            end
+            undoForcedSnap(now, char, root, rewindPivot)
+            rejectBounded(now)]==] },
+        }, "Auto Decline Bring TP V189")
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
