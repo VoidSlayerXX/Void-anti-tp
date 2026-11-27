@@ -3606,6 +3606,63 @@ do
         .. _ff .. string.sub(_body, _to)
 end
 
+
+-- FORCEFIELD V5: ADAPTIVE FIVE / TWELVE TARGET WAVES
+-- Change Forcefield ONLY. Preserve V4 automatic recovery / fair FIFO,
+-- whitelist, safe self return, and the same carry/event/stop ownership.
+-- Five eligible people: queue all five; crowded bubble: 12 per bounded wave.
+-- The game server still decides which teleport requests actually succeed.
+do
+    local _start = [==[-- V2 FORCEFIELD V119: radius-based sequential push intervals, safe self-return.]==]
+    local _stop = [==[-- V2 only: Counter TP uses the working Anti-Grab targeted classroom]==]
+    local _a = string.find(_body, _start, 1, true)
+    local _b = _a and string.find(_body, _stop, _a + #_start, true)
+    if not _a or not _b then
+        error("[VOID HUB Forcefield V5] module boundaries missing")
+    end
+    local _ff = string.sub(_body, _a, _b - 1)
+    local _edits = {
+        { [==[        local MAX_PENDING_TARGETS = 24]==], [==[        local MAX_PENDING_TARGETS = 64 -- up to 50 contacts plus late re-entries]==] },
+        { [==[        local MAX_BURST_TARGETS = 5
+        local BURST_WINDOW_SECONDS = 0.65]==], [==[        local MAX_BURST_TARGETS = 12 -- high-crowd wave capacity
+        local BURST_WINDOW_SECONDS = 2.20 -- enough for 12 safe serial handoffs]==] },
+        { [==[        local burstCount = 0
+        local nearbyCount = 0
+        local scanAccumulator = 0]==], [==[        local burstCount = 0
+        local nearbyCount = 0
+        -- Up to five nearby: attempt all five during the active wave.
+        -- For larger crowds (up to 50+): process at most twelve per wave.
+        -- Never fire simultaneous carry remotes; that corrupts server state.
+        local function currentWaveLimit()
+            return nearbyCount <= 5 and 5 or MAX_BURST_TARGETS
+        end
+        local scanAccumulator = 0]==] },
+        { [==[            status.Text = status.Text
+                .. (" | 5-player rapid bursts")]==], [==[            status.Text = status.Text
+                .. (" | Wave %d/%d | 12 max in crowds")
+                    :format(burstCount, currentWaveLimit())]==] },
+        { [==[                -- Five contacts can be served in one short window, then
+                -- later entrants continue on the next bounded burst.
+                and (burstCount < MAX_BURST_TARGETS
+                    or now - burstWindowStartedAt >= BURST_WINDOW_SECONDS) then]==], [==[                -- Small crowds: all five get a turn. Crowds over five:
+                -- at most twelve sequential pushes in the wave, with
+                -- subsequent queued players starting in the next wave.
+                and (burstCount < currentWaveLimit()
+                    or now - burstWindowStartedAt >= BURST_WINDOW_SECONDS) then]==] }
+    }
+    for _, change in ipairs(_edits) do
+        local a, b = string.find(_ff, change[1], 1, true)
+        if not a or string.find(_ff, change[1], b + 1, true) then
+            error("[VOID HUB Forcefield V5] incompatible patch: "
+                .. string.sub(change[1], 1, 75))
+        end
+        _ff = string.sub(_ff, 1, a - 1)
+            .. change[2] .. string.sub(_ff, b + 1)
+    end
+    _body = string.sub(_body, 1, _a - 1)
+        .. _ff .. string.sub(_body, _b)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
