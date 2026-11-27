@@ -1208,6 +1208,99 @@ _forcefieldTimingReplace(
     'Next player every %d seconds.',
     'Next player every %.2f seconds.')
 
+-- Anti-Grab V2 return and duplicate counter fix (scoped to Anti Grab only).
+do
+    local _startTag = "do\n    -- Anti Grab V181:"
+    local _endTag = "-- DEFENSE: ANTI TP"
+    local _from = string.find(_body, _startTag, 1, true)
+    local _to = _from and string.find(_body, _endTag, _from + #_startTag, true)
+    if not _from or not _to then error("[VOID HUB AntiGrab] module missing") end
+    local _block = string.sub(_body, _from, _to - 1)
+    local _edits = {
+        { [==[    local classroomCounterQueue = {}
+]==], [==[    local classroomCounterQueue = {}
+    -- Merge duplicate CarryStarted/PlatformStand/Heartbeat observations.
+    local classroomIncidentActive = false
+    local classroomIncidentFreeSince = nil
+]==] },
+        { [==[local RETURN_LOCK_SECONDS = 1.05]==], [==[local RETURN_LOCK_SECONDS = 2.05]==] },
+        { [==[local SAFE_POSITION_MAX_AGE = 2.2]==], [==[local SAFE_POSITION_MAX_AGE = 3.0]==] },
+        { [==[local COUNTER_MAX_AGE = 2.00]==], [==[local COUNTER_MAX_AGE = 0.75]==] },
+        { [==[local COUNTER_SELF_GUARD_SECONDS = 1.6]==], [==[local COUNTER_SELF_GUARD_SECONDS = 2.40]==] },
+        { [==[return os.clock() - lastIncomingCarryAt < 0.09]==], [==[return os.clock() - lastIncomingCarryAt < 0.04]==] },
+        { [==[        local saved = root.CFrame
+        local didCarry, didEvent = false, false]==], [==[        -- Prefer the PRE-GRAB checkpoint; post-grab root may be in Classroom.
+        local saved = (returnCharacter == ownCharacter and returnCFrame)
+            or ((os.clock() - lastSafeAt <= SAFE_POSITION_MAX_AGE) and lastSafe)
+            or root.CFrame
+        local didCarry, didEvent = false, false]==] },
+        { [==[        if incidentSource ~= "platform"
+            and classroomLastQueuedPlayer == target
+            and now - classroomLastQueuedAt < COUNTER_EVENT_DEDUP then return end]==], [==[        if classroomIncidentActive then return end
+        if classroomLastQueuedPlayer == target
+            and now - classroomLastQueuedAt < COUNTER_EVENT_DEDUP then return end]==] },
+        { [==[        classroomCounterQueue[#classroomCounterQueue + 1] = {
+            player = target, at = now, character = character,
+        }
+        Gui:SetAttribute("AntiGrabClassroomPending", true)]==], [==[        classroomCounterQueue[#classroomCounterQueue + 1] = {
+            player = target, at = now, character = character,
+        }
+        classroomIncidentActive = true
+        classroomIncidentFreeSince = nil
+        Gui:SetAttribute("AntiGrabClassroomPending", true)]==] },
+        { [==[    local function clearClassroomCounters()
+        Gui:SetAttribute("AntiGrabClassroomPending", false)]==], [==[    local function clearClassroomCounters()
+        classroomIncidentActive = false
+        classroomIncidentFreeSince = nil
+        Gui:SetAttribute("AntiGrabClassroomPending", false)]==] },
+        { [==[            if corrections < 4 and (forcedClassroomMove or suddenSnap) then
+                -- Correct a snap only, not ordinary walking or jumping.]==], [==[            if corrections < 5 and forcedClassroomMove
+                and not currentRoot.Anchored and not hum.PlatformStand then
+                -- Correct confirmed wrong-room snaps only; never TP Walk.]==] },
+        { [==[                    currentRoot.CFrame = CFrame.new(saved.Position)
+                        * currentRoot.CFrame.Rotation]==], [==[                    character:PivotTo(CFrame.new(saved.Position)
+                        * currentRoot.CFrame.Rotation)]==] },
+        { [==[            and (unexpectedClassroom or (
+                sampleGap > 0 and sampleGap <= 0.22
+                and suddenStep >= boostedMovementTolerance(hum, sampleGap)
+                and (suddenStep / sampleGap) >= 90))]==], [==[            and (unexpectedClassroom or (
+                sampleGap > 0 and sampleGap <= 0.22
+                and suddenStep >= boostedMovementTolerance(hum, sampleGap)
+                and (suddenStep / sampleGap) >= 90
+                and (hum.PlatformStand or hum.Sit or root.Anchored
+                    or Gui:GetAttribute("AntiGrabRecovering") == true)))]==] },
+        { [==[        local now = os.clock()
+        if not DeathTPIsEscaping and not isManualGrabWindow() then
+            -- Some grab systems weld a moving victim to the carrier]==], [==[        local now = os.clock()
+        -- Rearm counter only after the player is stably released.
+        -- A late echo from the same continuous grab cannot send a second TP.
+        if classroomIncidentActive then
+            local stillHeld = isLocked(h, r, now)
+                or linkedIncomingCarrier(r) ~= nil
+            if not stillHeld and now - lastIncomingCarryAt > 0.20 then
+                classroomIncidentFreeSince = classroomIncidentFreeSince or now
+                if now - classroomIncidentFreeSince >= 0.15 then
+                    classroomIncidentActive = false
+                    classroomIncidentFreeSince = nil
+                end
+            else
+                classroomIncidentFreeSince = nil
+            end
+        end
+        if not DeathTPIsEscaping and not isManualGrabWindow() then
+            -- Some grab systems weld a moving victim to the carrier]==] },
+    }
+    for _, pair in ipairs(_edits) do
+        local first, last = string.find(_block, pair[1], 1, true)
+        if not first or string.find(_block, pair[1], last + 1, true) then
+            error("[VOID HUB AntiGrab] ambiguous patch: " .. string.sub(pair[1], 1, 56))
+        end
+        _block = string.sub(_block, 1, first - 1) .. pair[2]
+            .. string.sub(_block, last + 1)
+    end
+    _body = string.sub(_body, 1, _from - 1) .. _block .. string.sub(_body, _to)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
