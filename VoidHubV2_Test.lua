@@ -2332,6 +2332,58 @@ do
     _body = string.sub(_body, 1, _from-1) .. _ct .. string.sub(_body, _to)
 end
 
+-- Counter TP V7 fixed nine-stud radius (no Apply required).
+-- Force 9 studs on every startup, even if prior saved input was smaller.
+-- Do not auto-toggle Counter TP or alter its attacker/teleport logic.
+do
+    local _begin = [==[-- DEFENSE: COUNTER TP (TARGETED CARRY/EVENT, NO BUBBLE)]==]
+    local _end = [==[-- VOID HUB V1 / UNIFIED COMMAND CENTER LAYOUT]==]
+    local _from = string.find(_body, _begin, 1, true)
+    local _to = _from and string.find(_body, _end, _from + #_begin, true)
+    if not _from or not _to then error("[VOID HUB Counter TP 9] module missing") end
+    local _counter = string.sub(_body, _from, _to - 1)
+    local _edits = {
+        { [==[    label.Text = "Radius (1-9):"]==], [==[    label.Text = "Fixed range:"]==] },
+        { [==[    radiusBox.PlaceholderText = "1-9"
+    radiusBox.ClearTextOnFocus = false]==], [==[    radiusBox.PlaceholderText = "9"
+    radiusBox.ClearTextOnFocus = false
+    radiusBox.TextEditable = false]==] },
+        { [==[    apply.Text = "APPLY"
+    apply.Font = Enum.Font.GothamBold]==], [==[    apply.Text = "9 STUDS"
+    apply.Visible = false -- Fixed range requires no button click.
+    apply.Font = Enum.Font.GothamBold]==] },
+        { [==[    local function changeRadius()
+        local n = tonumber(radiusBox.Text)
+        if not n or n ~= n or n == math.huge or n == -math.huge then
+            radiusBox.Text = tostring(radius)
+            render("Please enter 1-9 studs.")
+            return
+        end
+        radius = math.clamp(math.floor(n + 0.5), 1, 9)
+        radiusBox.Text = tostring(radius)
+        render(enabled and "ON. New hit radius applied." or "Radius saved; toggle ON to test.")
+    end]==], [==[    -- Saved UI input values can override the default TextBox on startup.
+    -- This function is also called by savedApply after settings load, so
+    -- the Counter TP range ALWAYS returns to 9 without pressing APPLY.
+    local function changeRadius()
+        radius = 9
+        if radiusBox.Text ~= "9" then radiusBox.Text = "9" end
+        render(enabled and "ON. Fixed 9-stud hit range."
+            or "Fixed 9-stud range ready; toggle ON to use.")
+    end]==] },
+    }
+    for _, pair in ipairs(_edits) do
+        local i, j = string.find(_counter, pair[1], 1, true)
+        if not i or string.find(_counter, pair[1], j+1, true) then
+            error("[VOID HUB Counter TP 9] conflicting range patch")
+        end
+        _counter = string.sub(_counter, 1, i-1)
+            .. pair[2] .. string.sub(_counter, j+1)
+    end
+    _body = string.sub(_body, 1, _from-1) .. _counter
+        .. string.sub(_body, _to)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
