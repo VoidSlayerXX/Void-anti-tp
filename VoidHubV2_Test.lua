@@ -3663,6 +3663,54 @@ do
         .. _ff .. string.sub(_body, _b)
 end
 
+
+-- FORCEFIELD V6: FAST SERIAL PUSH + QUICK CLEAN SELF RETURN
+-- Forcefield ONLY: shorter bounded carry/event settle, quicker snap-only
+-- return and self-recovery. Do not anchor/pin the avatar or interleave remotes.
+-- Preserve V5 twelve-player waves, V4 fair queue/watchdog, whitelist and V2 features.
+do
+    local _start = [==[-- V2 FORCEFIELD V119: radius-based sequential push intervals, safe self-return.]==]
+    local _stop = [==[-- V2 only: Counter TP uses the working Anti-Grab targeted classroom]==]
+    local _from = string.find(_body, _start, 1, true)
+    local _to = _from and string.find(_body, _stop, _from + #_start, true)
+    if not _from or not _to then error("[VOID HUB Forcefield V6] boundaries missing") end
+    local _ff = string.sub(_body, _from, _to - 1)
+    local _changes = {
+        { [==[        local HANDOFF_STUCK_SECONDS = 1.70]==], [==[        local HANDOFF_STUCK_SECONDS = 1.40 -- reset only genuinely stalled handoffs]==] },
+        { [==[        local BURST_WINDOW_SECONDS = 2.20 -- enough for 12 safe serial handoffs]==], [==[        local BURST_WINDOW_SECONDS = 1.75 -- faster adaptive waves]==] },
+        { [==[        local function pushInterval()
+            return 0.08
+        end
+        local RELEASE_SETTLE_SECONDS = 0.04 -- avoid overlapping releases]==], [==[        local function pushInterval()
+            return 0.055 -- responsive, serial push requests
+        end
+        local RELEASE_SETTLE_SECONDS = 0.030 -- preserve StopCarry settling]==] },
+        { [==[                    and corrections < 2 and now - lastCorrectionAt >= 0.14 then]==], [==[                    -- Quicker bounded return after a completed handoff.
+                    -- Never pin the character each frame or while welded.
+                    and corrections < 3 and now - lastCorrectionAt >= 0.085 then]==] },
+        { [==[                task.wait(0.075) -- allow server carry to settle before event]==], [==[                task.wait(0.060) -- faster but still allow Carry to register]==] },
+        { [==[                    task.wait(0.045) -- wait for teleport event before StopCarry]==], [==[                    task.wait(0.035) -- settle event before StopCarry]==] },
+        { [==[                        if not hum.PlatformStand and recovery.tries < 8
+                            and now - recovery.lastTry >= 0.18 then]==], [==[                        if not hum.PlatformStand and recovery.tries < 8
+                            and now - recovery.lastTry >= 0.11 then]==] },
+        { [==[                    if now - recovery.stableSince >= 0.38 then]==], [==[                    if now - recovery.stableSince >= 0.23 then]==] },
+        { [==[                        unsafeUntil = math.max(unsafeUntil, now + 0.50)
+                        warn("[VOID HUB FORCEFIELD] Self teleported by push; restored saved position.")]==], [==[                        unsafeUntil = math.max(unsafeUntil, now + 0.30)
+                        warn("[VOID HUB FORCEFIELD] Self teleported by push; restored saved position.")]==] },
+        { [==[                local endAt = os.clock() + 0.80]==], [==[                local endAt = os.clock() + 0.70 -- late StopCarry echo grace]==] }
+    }
+    for _, entry in ipairs(_changes) do
+        local a, b = string.find(_ff, entry[1], 1, true)
+        if not a or string.find(_ff, entry[1], b + 1, true) then
+            error("[VOID HUB Forcefield V6] patch conflict: "
+                .. string.sub(entry[1], 1, 75))
+        end
+        _ff = string.sub(_ff, 1, a - 1)
+            .. entry[2] .. string.sub(_ff, b + 1)
+    end
+    _body = string.sub(_body, 1, _from - 1) .. _ff .. string.sub(_body, _to)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
