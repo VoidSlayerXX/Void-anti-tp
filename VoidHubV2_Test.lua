@@ -3438,6 +3438,174 @@ do
         .. _ct .. string.sub(_body, _to)
 end
 
+
+-- FORCEFIELD V4: FAIR QUEUE, WATCHDOG AND AUTOMATIC SMOOTH RECOVERY
+-- V2 Forcefield ONLY: preserve five-player serial burst, whitelist, radius,
+-- and the existing self-return protections. Prevent head-of-line stalls,
+-- stuck worker ownership, and excessive cooldown following bad replies.
+do
+    local _start = [==[-- V2 FORCEFIELD V119: radius-based sequential push intervals, safe self-return.]==]
+    local _stop = [==[-- V2 only: Counter TP uses the working Anti-Grab targeted classroom]==]
+    local _from = string.find(_body, _start, 1, true)
+    local _to = _from and string.find(_body, _stop, _from + #_start, true)
+    if not _from or not _to then
+        error("[VOID HUB Forcefield V4] feature boundary missing")
+    end
+    local _ff = string.sub(_body, _from, _to - 1)
+    local _edits = {
+        { [==[        local lastRequestAt = -math.huge
+        -- Detect all contacts;]==], [==[        local lastRequestAt = -math.huge
+        -- An aborted carry must never permanently lock the Forcefield.
+        -- Only Forcefield can release its own shared teleport ownership.
+        local handoffToken = 0
+        local handoffStartedAt = -math.huge
+        local HANDOFF_STUCK_SECONDS = 1.70
+        -- Detect all contacts;]==] },
+        { [==[        local function pushInterval()
+            return 0.035
+        end
+        local RELEASE_SETTLE_SECONDS = 0.025 -- short settle between distinct targets]==], [==[        -- Slightly longer, smoother server handoff; still serial.
+        local function pushInterval()
+            return 0.08
+        end
+        local RELEASE_SETTLE_SECONDS = 0.04 -- avoid overlapping releases]==] },
+        { [==[            enabled = not enabled
+            nearbyCount = 0]==], [==[            enabled = not enabled
+            -- Cancel in-flight workers from a prior ON/OFF generation.
+            handoffToken += 1
+            handoffStartedAt = -math.huge
+            if SharedTeleportOwner == "Forcefield" then
+                local _, _, release = validRemotes()
+                if release then pcall(function() release:FireServer() end) end
+                SharedTeleportOwner = nil
+                SharedTeleportCooldownUntil = math.max(
+                    SharedTeleportCooldownUntil, os.clock() + 0.15)
+            end
+            busy = false
+            nearbyCount = 0]==] },
+        { [==[        local function requestTeleportPush(target, desiredPosition, entryState)
+            local function finish()]==], [==[        local function requestTeleportPush(target, desiredPosition, entryState, token)
+            local function finish()
+                if token ~= handoffToken then return end
+                handoffStartedAt = -math.huge]==] },
+        { [==[            if not alive or not enabled or not Gui.Parent
+                or not carry or not event or not stop]==], [==[            if not alive or not enabled or not Gui.Parent
+                or token ~= handoffToken
+                or not carry or not event or not stop]==] },
+        { [==[                task.wait(0.055) -- rapid serial carry handoff; do not overlap owners]==], [==[                task.wait(0.075) -- allow server carry to settle before event]==] },
+        { [==[                if alive and enabled and Player.Character == ownChar
+                    and os.clock() >= unsafeUntil]==], [==[                if alive and enabled and token == handoffToken
+                    and Player.Character == ownChar
+                    and os.clock() >= unsafeUntil]==] },
+        { [==[                    and Gui:GetAttribute("AntiGrabRecovering") ~= true
+                    and Gui:GetAttribute("CounterTPHitPending") ~= true then]==], [==[                    -- A pending Counter TP queue is passive: the actual
+                    -- SharedTeleportOwner above already serializes remotes.
+                    -- Do not stall Forcefield forever on a stale pending flag.
+                    and Gui:GetAttribute("AntiGrabRecovering") ~= true then]==] },
+        { [==[                    task.wait(0.025) -- shorter target handoff before StopCarry]==], [==[                    task.wait(0.045) -- wait for teleport event before StopCarry]==] },
+        { [==[            if carried and Player.Character == ownChar
+                and not isManualGrabWindow() then]==], [==[            if carried and token == handoffToken
+                and Player.Character == ownChar
+                and not isManualGrabWindow() then]==] },
+        { [==[                        unsafeUntil = math.max(unsafeUntil, os.clock() + 4.0)
+                        render("Server sent target toward classroom; push paused for 4s.")]==], [==[                        -- A short automatic backoff, not a four-second
+                        -- apparent shutdown. The server may reject the
+                        -- outward destination; do not spam repeated events.
+                        unsafeUntil = math.max(unsafeUntil, os.clock() + 1.50)
+                        render("Server moved target toward classroom; recovering automatically.")]==] },
+        { [==[                if now - recovery.startedAt >= 8.0 then]==], [==[                if now - recovery.startedAt >= 4.5 then]==] },
+        { [==[                    recovery.cooldownUntil = now + 2.0
+                    unsafeUntil = math.max(unsafeUntil, now + 2.0)]==], [==[                    recovery.cooldownUntil = now + 1.0
+                    unsafeUntil = math.max(unsafeUntil, now + 1.0)
+                    warn("[VOID HUB FORCEFIELD V4] Recovery timed out; automatic re-arm in 1s.")]==] },
+        { [==[            local nowForVisual = os.clock()
+            if nowForVisual < bubbleFlashUntil then]==], [==[            local nowForVisual = os.clock()
+            -- The old worker could leave busy/SharedTeleportOwner active
+            -- after an error and block ALL later contacts until relogging.
+            -- Recover our own stuck handoff with a single StopCarry.
+            if busy and handoffStartedAt > 0
+                and nowForVisual - handoffStartedAt >= HANDOFF_STUCK_SECONDS then
+                handoffToken += 1
+                handoffStartedAt = -math.huge
+                if SharedTeleportOwner == "Forcefield" then
+                    local _, _, release = validRemotes()
+                    if release then pcall(function() release:FireServer() end) end
+                    SharedTeleportOwner = nil
+                    SharedTeleportCooldownUntil = math.max(
+                        SharedTeleportCooldownUntil, nowForVisual + 0.20)
+                end
+                busy = false
+                selfHandoffComplete = true
+                lastHandoffDoneAt = nowForVisual
+                unsafeUntil = math.max(unsafeUntil, nowForVisual + 0.40)
+                warn("[VOID HUB FORCEFIELD V4] Stalled carry recovered; queue remains active.")
+            end
+            if nowForVisual < bubbleFlashUntil then]==] },
+        { [==[            -- Drop expired entries without dropping other queued touches.
+            -- The queue remains intact while a previous carry is finishing.
+            local nearest = nil
+            while #pendingTargets > 0 do]==], [==[            -- Fair FIFO: a temporarily cooling-down player must not
+            -- block every other waiting contact in the queue.
+            local nearest = nil
+            local checked = 0
+            local maxToCheck = #pendingTargets
+            while #pendingTargets > 0 and checked < maxToCheck do
+                checked += 1]==] },
+        { [==[                    -- Preserve this touch until the per-target cooldown ends.
+                    break
+                else
+                    nearest = {]==], [==[                    -- Rotate this still-valid touch to the back so another
+                    -- player can be served. Never discard their pending entry.
+                    table.remove(pendingTargets, 1)
+                    table.insert(pendingTargets, queued)
+                else
+                    nearest = {]==] },
+        { [==[                and Gui:GetAttribute("AntiGrabRecovering") ~= true
+                and Gui:GetAttribute("CounterTPHitPending") ~= true
+                and now - lastRequestAt >= pushInterval()]==], [==[                and Gui:GetAttribute("AntiGrabRecovering") ~= true
+                -- SharedTeleportOwner alone prevents conflicting handoffs;
+                -- a passive Counter TP queue should not block every push.
+                and now - lastRequestAt >= pushInterval()]==] },
+        { [==[                busy, SharedTeleportOwner = true, "Forcefield"
+                task.spawn(requestTeleportPush, entry.player, desired, entry.state)]==], [==[                handoffToken += 1
+                local thisHandoff = handoffToken
+                handoffStartedAt = now
+                busy, SharedTeleportOwner = true, "Forcefield"
+                task.spawn(function()
+                    -- Catch unexpected Lua errors too, not only FireServer
+                    -- errors, so a single bad target cannot kill the queue.
+                    local ok, err = pcall(requestTeleportPush,
+                        entry.player, desired, entry.state, thisHandoff)
+                    if not ok and thisHandoff == handoffToken then
+                        warn("[VOID HUB FORCEFIELD V4] Push error; reset: " .. tostring(err))
+                        local _, _, release = validRemotes()
+                        if release then pcall(function() release:FireServer() end) end
+                        if SharedTeleportOwner == "Forcefield" then
+                            SharedTeleportOwner = nil
+                            SharedTeleportCooldownUntil = math.max(
+                                SharedTeleportCooldownUntil, os.clock() + 0.20)
+                        end
+                        busy = false
+                        handoffStartedAt = -math.huge
+                        selfHandoffComplete = true
+                        lastHandoffDoneAt = os.clock()
+                        unsafeUntil = math.max(unsafeUntil, os.clock() + 0.45)
+                    end
+                end)]==] }
+    }
+    for _, edit in ipairs(_edits) do
+        local a, b = string.find(_ff, edit[1], 1, true)
+        if not a or string.find(_ff, edit[1], b + 1, true) then
+            error("[VOID HUB Forcefield V4] incompatible patch: "
+                .. string.sub(edit[1], 1, 75))
+        end
+        _ff = string.sub(_ff, 1, a - 1)
+            .. edit[2] .. string.sub(_ff, b + 1)
+    end
+    _body = string.sub(_body, 1, _from - 1)
+        .. _ff .. string.sub(_body, _to)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
