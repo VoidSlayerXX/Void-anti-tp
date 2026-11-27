@@ -3289,6 +3289,106 @@ do
         .. _block .. string.sub(_body, _to)
 end
 
+
+-- COUNTER TP V10: FOUR-ATTACKER EVIDENCE + LATE REPLICATION
+-- V2 only. Keep freeze, auto block, auto decline and bring all unchanged.
+-- Four evidenced candidates can be queued from one actual HP-loss event.
+-- All Carry/Event/Stop remote requests remain serialized.
+do
+    local _start = [==[-- DEFENSE: COUNTER TP (TARGETED CARRY/EVENT, NO BUBBLE)]==]
+    local _stop = [==[-- VOID HUB V1 / UNIFIED COMMAND CENTER LAYOUT]==]
+    local _from = string.find(_body, _start, 1, true)
+    local _to = _from and string.find(_body, _stop, _from + #_start, true)
+    if not _from or not _to then
+        error("[VOID HUB Counter TP V10] module missing")
+    end
+    local _ct = string.sub(_body, _from, _to - 1)
+    local _changes = {
+        { [==[    local MAX_HIT_QUEUE = 8]==], [==[    local MAX_HIT_QUEUE = 12 -- bounded multi-attacker queue]==] },
+        { [==[    local lastQueuedForTarget = {}
+    local lastQueuedAnyAt = -math.huge]==], [==[    local lastQueuedForTarget = {}
+    local queuedThisImpact = {} -- dedupe each player within one HP-loss event
+    local lastQueuedAnyAt = -math.huge]==] },
+        { [==[                                and event.at >= impactAt - 0.22
+                                and event.at <= impactAt + 0.12 then]==], [==[                                and event.at >= impactAt - 0.22
+                                and event.at <= impactAt + 0.26 then]==] },
+        { [==[                    if #matched > 3 then
+                        f9HitTracker("V9_MULTI_LIMIT", nil,
+                            tostring(#matched) .. " candidates; first three only")
+                        while #matched > 3 do table.remove(matched) end
+                    end]==], [==[                    if #matched > 4 then
+                        f9HitTracker("V10_MULTI_LIMIT", nil,
+                            tostring(#matched) .. " candidates; first four only")
+                        while #matched > 4 do table.remove(matched) end
+                    end]==] },
+        { [==[            if actualDamage and not retry then
+                -- A newer real damage event cancels older unresolved retries.
+                unresolvedHitId += 1
+            end]==], [==[            if actualDamage and not retry then
+                unresolvedHitId += 1
+                table.clear(queuedThisImpact)
+                local impactId = unresolvedHitId
+                -- Four players' animations can replicate over several frames.
+                -- Recheck even if the first attacker has been identified.
+                for _, delaySeconds in ipairs({0.03, 0.09, 0.17, 0.29, 0.46}) do
+                    task.delay(delaySeconds, function()
+                        if alive and enabled and revision == generation
+                            and Player.Character == character
+                            and unresolvedHitId == impactId then
+                            hit(signal, 0, impactId)
+                        end
+                    end)
+                end
+            end]==] },
+        { [==[                    unresolvedHitId += 1
+                    local pendingId = unresolvedHitId
+                    -- Fast first retry for damage whose animation arrives
+                    -- AFTER HealthChanged; bounded late replication checks.
+                    for _, delaySeconds in ipairs({0.03, 0.08, 0.16, 0.32, 0.62}) do
+                        task.delay(delaySeconds, function()
+                            if alive and enabled and revision == generation
+                                and Player.Character == character
+                                and unresolvedHitId == pendingId then
+                                hit(signal, 0, pendingId)
+                            end
+                        end)
+                    end]==], [==[                    -- All recent damage events already have scheduled
+                    -- bounded retry checks, including unknown attackers.]==] },
+        { [==[            if retry then unresolvedHitId += 1 end]==], [==[            -- Other checks for the SAME damage event must remain valid.]==] },
+        { [==[                    and now - (lastQueuedForTarget[candidate.UserId] or -math.huge)
+                        >= COUNTER_IMPACT_ECHO_SECONDS then
+                    lastQueuedForTarget[candidate.UserId] = now
+                    table.insert(hitQueue, {]==], [==[                    and not queuedThisImpact[candidate.UserId]
+                    and now - (lastQueuedForTarget[candidate.UserId] or -math.huge)
+                        >= COUNTER_IMPACT_ECHO_SECONDS then
+                    lastQueuedForTarget[candidate.UserId] = now
+                    queuedThisImpact[candidate.UserId] = true
+                    table.insert(hitQueue, {]==] },
+        { [==[                    local queueTTL = item.multiHit and 3.6 or 1.4]==], [==[                    local queueTTL = item.multiHit and 5.2 or 1.4]==] },
+        { [==[        table.clear(lastQueuedForTarget)
+        lastQueuedAnyAt = -math.huge]==], [==[        table.clear(lastQueuedForTarget)
+        table.clear(queuedThisImpact)
+        lastQueuedAnyAt = -math.huge]==] },
+        { [==[        -- Never send to more than three targets for one damage event.
+        -- A fourth eligible attacker is left to a subsequent real hit.]==], [==[        -- Never select a candidate from proximity alone.
+        -- Multi-attacker queueing is capped at four known-style candidates.]==] },
+        { [==[            if simultaneousTargets then
+                render(("V9 %d attackers queued separately; no blind targeting.")]==], [==[            if simultaneousTargets then
+                render(("V10 %d attackers queued separately; no blind targeting.")]==] }
+    }
+    for _, change in ipairs(_changes) do
+        local i, j = string.find(_ct, change[1], 1, true)
+        if not i or string.find(_ct, change[1], j + 1, true) then
+            error("[VOID HUB Counter TP V10] incompatible marker: "
+                .. string.sub(change[1], 1, 70))
+        end
+        _ct = string.sub(_ct, 1, i - 1)
+            .. change[2] .. string.sub(_ct, j + 1)
+    end
+    _body = string.sub(_body, 1, _from - 1)
+        .. _ct .. string.sub(_body, _to)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
