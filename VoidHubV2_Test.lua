@@ -2124,6 +2124,117 @@ do
         }, "TP Walk")
 end
 
+-- Counter TP V6 unknown-attacker animation diagnostics; no behavior changes.
+-- Capture recent animation IDs around actual HP loss for all nearby
+-- non-whitelisted candidates, to diagnose unknown attacks safely.
+do
+    local _start = [==[-- DEFENSE: COUNTER TP (TARGETED CARRY/EVENT, NO BUBBLE)]==]
+    local _stop = [==[-- VOID HUB V1 / UNIFIED COMMAND CENTER LAYOUT]==]
+    local _from = string.find(_body, _start, 1, true)
+    local _to = _from and string.find(_body, _stop, _from + #_start, true)
+    if not _from or not _to then error("[VOID HUB Counter TP V6] module missing") end
+    local _ct = string.sub(_body, _from, _to - 1)
+    local _edits = {
+        { [==[    local recentV5Fists = {}
+    local hitsDetected = 0]==], [==[    local recentV5Fists = {}
+    -- V6 read-only capture for hits with unknown attackers. This NEVER
+    -- changes attacker selection or the teleport request sequence.
+    local recentUnknownAnimations = {}
+    local lastUnknownTraceAt = -math.huge
+    local hitsDetected = 0]==] },
+        { [==[        table.clear(nearTimes)
+    end
+    local function attach(character, revision)]==], [==[        table.clear(nearTimes)
+        table.clear(recentUnknownAnimations)
+    end
+    local function attach(character, revision)]==] },
+        { [==[                local id = string.match(idString, "(%d+)$")
+                if id == V5_FIST_ID then]==], [==[                local id = string.match(idString, "(%d+)$")
+                if id then
+                    local history = recentUnknownAnimations[other] or {}
+                    recentUnknownAnimations[other] = history
+                    history[#history + 1] = {
+                        at = os.clock(),
+                        id = id,
+                        character = c,
+                        name = name
+                    }
+                    if #history > 16 then table.remove(history, 1) end
+                end
+                if id == V5_FIST_ID then]==] },
+        { [==[            if not target then
+                if not retry then
+                    -- Damage tags can replicate AFTER the HealthChanged event.]==], [==[            if not target then
+                if not retry and actualDamage
+                    and now - lastUnknownTraceAt >= 0.45 then
+                    lastUnknownTraceAt = now
+                    local damageAt = now
+                    -- A delayed diagnostic catches animations replicated
+                    -- just AFTER health loss. It logs candidate observations,
+                    -- NEVER guesses an attacker or fires teleport remotes.
+                    task.delay(0.70, function()
+                        if not alive or not enabled or revision ~= generation
+                            or Player.Character ~= character then return end
+                        local currentRoot = character:FindFirstChild("HumanoidRootPart")
+                        local shown = 0
+                        for _, candidate in ipairs(Players:GetPlayers()) do
+                            if candidate ~= Player and candidate.Parent == Players
+                                and not inPlayerList(State.Whitelist, candidate) then
+                                local theirChar = candidate.Character
+                                local theirRoot = theirChar
+                                    and theirChar:FindFirstChild("HumanoidRootPart")
+                                local distance = currentRoot and theirRoot
+                                    and (theirRoot.Position - currentRoot.Position).Magnitude
+                                    or math.huge
+                                local recentlyNear = nearTimes[candidate.UserId]
+                                    and os.clock() - nearTimes[candidate.UserId] <= 1.8
+                                if distance <= radius + 3 or recentlyNear then
+                                    shown += 1
+                                    local labels = {}
+                                    local history = recentUnknownAnimations[candidate] or {}
+                                    for i = #history, 1, -1 do
+                                        local item = history[i]
+                                        local offset = item.at - damageAt
+                                        if item.character == theirChar
+                                            and offset >= -0.80 and offset <= 0.70 then
+                                            labels[#labels + 1] =
+                                                item.id .. string.format("(%+.2fs)", offset)
+                                            if #labels >= 4 then break end
+                                        end
+                                    end
+                                    f9HitTracker("V6_UNKNOWN_CANDIDATE",
+                                        candidate,
+                                        string.format("distance=%.1f animationIDs=%s",
+                                            distance,
+                                            #labels > 0 and table.concat(labels, ",")
+                                            or "none"))
+                                end
+                            end
+                            if shown >= 6 then break end
+                        end
+                        if shown == 0 then
+                            f9HitTracker("V6_UNKNOWN_TRACE", nil,
+                                "No eligible nearby player observed; attacker unknown")
+                        end
+                    end)
+                end
+                if not retry then
+                    -- Damage tags can replicate AFTER the HealthChanged event.]==] },
+        { [==[    bindGlobal(Players.PlayerRemoving, function(p)
+        recentV5Fists[p] = nil]==], [==[    bindGlobal(Players.PlayerRemoving, function(p)
+        recentUnknownAnimations[p] = nil
+        recentV5Fists[p] = nil]==] },
+    }
+    for _, edit in ipairs(_edits) do
+        local a, b = string.find(_ct, edit[1], 1, true)
+        if not a or string.find(_ct, edit[1], b+1, true) then
+            error("[VOID HUB Counter TP V6] conflict")
+        end
+        _ct = string.sub(_ct, 1, a-1) .. edit[2] .. string.sub(_ct, b+1)
+    end
+    _body = string.sub(_body, 1, _from-1) .. _ct .. string.sub(_body, _to)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
