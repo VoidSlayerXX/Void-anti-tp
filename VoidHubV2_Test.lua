@@ -1186,6 +1186,28 @@ _body = string.sub(_body, 1, _rosterAt - 1) .. _rosterNew
 local _rosterMessageOld = 'sampleText = next(State.Blacklist) and "No eligible players online"'
     .. '\n                or "Add players to Blacklist (or ALL)"'
 -- V1 original message already explains how to enable ALL in the Blacklist.
+-- Forcefield handoff speed adjustment: 0.07s.
+-- Changes only Forcefield's scheduling constants and displayed precision.
+local function _forcefieldTimingReplace(oldText, newText)
+    local startIndex, endIndex = string.find(_body, oldText, 1, true)
+    if not startIndex then
+        error("[VOID HUB Forcefield] speed setting not found")
+    end
+    local second = string.find(_body, oldText, endIndex + 1, true)
+    if second then error("[VOID HUB Forcefield] duplicate speed setting") end
+    _body = string.sub(_body, 1, startIndex - 1) .. newText
+        .. string.sub(_body, endIndex + 1)
+end
+_forcefieldTimingReplace(
+    "local function pushInterval()\n            return 0.28\n        end",
+    "local function pushInterval()\n            return 0.07\n        end")
+_forcefieldTimingReplace(
+    "local RELEASE_SETTLE_SECONDS = 0.12 -- bounded settle between different targets",
+    "local RELEASE_SETTLE_SECONDS = 0.07 -- bounded settle between different targets")
+_forcefieldTimingReplace(
+    'Next player every %d seconds.',
+    'Next player every %.2f seconds.')
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
