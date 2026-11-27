@@ -1567,6 +1567,44 @@ do
         .. string.sub(_body, _to)
 end
 
+-- Single-target Bring whitelist exception. ALL and other feature policies stay protected.
+do
+    local _begin = '    local card = makeFeatureCard(page, "Bring / Carry", 0)'
+    local _end = '    -- Anti Grab V181:'
+    local _from = string.find(_body, _begin, 1, true)
+    local _to = _from and string.find(_body, _end, _from + #_begin, true)
+    if not _from or not _to then error("[VOID HUB Bring] feature boundaries missing") end
+    local _block = string.sub(_body, _from, _to - 1)
+    local _edits = {
+        { [==[        if not target or target == Player or target.Parent ~= Players
+            or isBringProtected(target) then
+            return false, "Player unavailable or protected by Whitelist."
+        end]==], [==[        -- An explicitly selected single-player BRING may include whitelist.
+        -- ALL and Gymban continue to protect the whitelist unchanged.
+        if not target or target == Player or target.Parent ~= Players
+            or (isBringProtected(target) and (sendingAll or gymbanMode)) then
+            return false, "Player unavailable or protected by Whitelist."
+        end]==] },
+        { [==[        if isBringProtected(target) then
+            status.Text = target.Name .. " is WHITELISTED: Bring request blocked."
+            return
+        end
+        if not (Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")) then]==], [==[        -- Named BRING can select a whitelisted player; ALL/INSTA/Gymban
+        -- and all other whitelist protections stay unchanged.
+        if not (Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")) then]==] },
+    }
+    for _, edit in ipairs(_edits) do
+        local first, last = string.find(_block, edit[1], 1, true)
+        if not first or string.find(_block, edit[1], last + 1, true) then
+            error("[VOID HUB Bring] single-target whitelist patch ambiguous")
+        end
+        _block = string.sub(_block, 1, first - 1)
+            .. edit[2] .. string.sub(_block, last + 1)
+    end
+    _body = string.sub(_body, 1, _from - 1)
+        .. _block .. string.sub(_body, _to)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
