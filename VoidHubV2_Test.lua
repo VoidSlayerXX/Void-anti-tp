@@ -1457,6 +1457,116 @@ do
         .. string.sub(_body, _to)
 end
 
+-- Counter TP V5: correlate verified fist animations with damage before choosing a target.
+-- No changes to the original carry/event/stop teleport or safety logic.
+do
+    local _startTag = [==[-- DEFENSE: COUNTER TP (TARGETED CARRY/EVENT, NO BUBBLE)]==]
+    local _endTag = [==[-- VOID HUB V1 / UNIFIED COMMAND CENTER LAYOUT]==]
+    local _from = string.find(_body, _startTag, 1, true)
+    local _to = _from and string.find(_body, _endTag, _from + #_startTag, true)
+    if not _from or not _to then
+        error("[VOID HUB Counter TP V5] module boundaries missing")
+    end
+    local _counter = string.sub(_body, _from, _to - 1)
+    local _patches = {
+        { [==[    local nearTimes = {}]==], [==[    local nearTimes = {}
+    -- V5: observe the normal fist animation ID found during the F9 tests.
+    -- Animation alone is NOT evidence of a successful hit.
+    local V5_FIST_ID = "78215114906302"
+    local V5_WINDOW_BEFORE = 0.60
+    local V5_WINDOW_AFTER = 0.60
+    local V5_MAX_HISTORY = 12
+    local recentV5Fists = {}]==] },
+        { [==[        -- Games may replicate the damaging player as 'creator',]==], [==[        -- V5: link actual HP loss to a nearby player's known fist animation.
+        -- Count DISTINCT matching players. More than one means ambiguous.
+        -- Retry calls use lastDamageAt as the original impact timestamp.
+        local impactAt = lastDamageAt > -math.huge
+            and now - lastDamageAt <= 1.2 and lastDamageAt or now
+        local v5Match, v5Count = nil, 0
+        for _, candidate in ipairs(Players:GetPlayers()) do
+            if close(candidate) then
+                local history = recentV5Fists[candidate]
+                if history then
+                    for _, entry in ipairs(history) do
+                        if entry.character == candidate.Character
+                            and entry.at >= impactAt - V5_WINDOW_BEFORE
+                            and entry.at <= impactAt + V5_WINDOW_AFTER then
+                            v5Match, v5Count = candidate, v5Count + 1
+                            break
+                        end
+                    end
+                end
+            end
+        end
+        if v5Count == 1 then
+            f9HitTracker("V5_MATCHED", v5Match,
+                "fist animation + HP loss; attacker is probable, not confirmed")
+            return v5Match, "V5 fist animation + damage correlation"
+        elseif v5Count > 1 then
+            f9HitTracker("V5_AMBIGUOUS", nil,
+                tostring(v5Count) .. " players matched same damage")
+            return nil, "multiple possible V5 fist attackers"
+        end
+        -- Games may replicate the damaging player as 'creator',]==] },
+        { [==[        local one, count = nil, 0
+        for _, other in ipairs(Players:GetPlayers()) do
+            if close(other) then
+                count += 1
+                one = other
+                if count > 1 then return nil, "multiple close players" end
+            end
+        end
+        return one, one and "recent contact" or "no unique attacker within 9 studs (or target whitelisted)"]==], [==[        -- Never target a player solely because they are the nearest or
+        -- the ONLY other player in the server.
+        return nil, "no V5 fist animation matched HP loss and no damage tag"]==] },
+        { [==[                local combat = name:find("punch", 1, true)]==], [==[                local id = animation and tostring(animation.AnimationId)
+                    :match("(%d+)$") or nil
+                if id == V5_FIST_ID then
+                    local history = recentV5Fists[other] or {}
+                    recentV5Fists[other] = history
+                    history[#history + 1] = {
+                        at = os.clock(), character = c
+                    }
+                    if #history > V5_MAX_HISTORY then
+                        table.remove(history, 1)
+                    end
+                    f9HitTracker("V5_FIST_ANIMATION", other,
+                        "id=" .. V5_FIST_ID)
+                end
+                local combat = name:find("punch", 1, true)]==] },
+        { [==[            local actualDamage = (damage or 0) > 0.01]==], [==[            local actualDamage = (damage or 0) > 0.01
+            -- Fist animations/knockdowns without HP loss do not identify
+            -- the attacker and must not trigger an unverified teleport.
+            if not actualDamage and not retry then return end
+            if actualDamage and not retry then
+                -- A newer real damage event cancels older unresolved retries.
+                unresolvedHitId += 1
+            end]==] },
+        { [==[                    for _, delaySeconds in ipairs({0.07, 0.19, 0.33}) do]==], [==[                    -- Fast first retry for damage whose animation arrives
+                    -- AFTER HealthChanged; bounded late replication checks.
+                    for _, delaySeconds in ipairs({0.03, 0.08, 0.16, 0.32, 0.62}) do]==] },
+        { [==[    local function detach()
+        table.clear(hitQueue)]==], [==[    local function detach()
+        table.clear(recentV5Fists)
+        table.clear(hitQueue)]==] },
+        { [==[    bindGlobal(Players.PlayerRemoving, function(p)
+        -- Discard queued actions for a player who left.]==], [==[    bindGlobal(Players.PlayerRemoving, function(p)
+        recentV5Fists[p] = nil
+        -- Discard queued actions for a player who left.]==] },
+    }
+    for _, edit in ipairs(_patches) do
+        local first, last = string.find(_counter, edit[1], 1, true)
+        if not first or string.find(_counter, edit[1], last + 1, true) then
+            error("[VOID HUB Counter TP V5] ambiguous patch: "
+                .. string.sub(edit[1], 1, 70))
+        end
+        _counter = string.sub(_counter, 1, first - 1)
+            .. edit[2] .. string.sub(_counter, last + 1)
+    end
+    _body = string.sub(_body, 1, _from - 1) .. _counter
+        .. string.sub(_body, _to)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
