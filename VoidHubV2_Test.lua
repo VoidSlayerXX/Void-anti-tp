@@ -3274,7 +3274,7 @@ do
                                     :format(i, #targets, other.Name, tostring(ok),
                                         tostring(reason or "")))]==] },
         { [==[                        status.Text = ("ALL (0.2s/player): %d requests sent | %d failed | %d unavailable | %d selected. BRING cancels.")]==],
-          [==[                        status.Text = ("ALL (2/0.2s target): %d sent | %d failed | %d unavailable | %d/%d selected. BRING cancels.")]==] },
+          [==[                        status.Text = ("ALL (2/0.2s target): %d sent | %d failed | %d unavailable | %d selected. BRING cancels.")]==] },
     }
     for _, edit in ipairs(_edits) do
         local i, j = string.find(_block, edit[1], 1, true)
