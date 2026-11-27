@@ -3389,6 +3389,55 @@ do
         .. _ct .. string.sub(_body, _to)
 end
 
+
+-- COUNTER TP V11: RAPID SECOND HIT REARM, NO STALE ECHO LOCKOUT
+-- Counter TP ONLY: real second hits re-arm even during the previous outgoing
+-- teleport. The per-HP-impact deduper prevents duplicate queue entries.
+-- Maintain 9 studs, four distinct attackers, whitelist and shared handoff.
+-- Keep the unsafe self-only teleport guard, but recover after 1s not 5s.
+do
+    local _start = [==[-- DEFENSE: COUNTER TP (TARGETED CARRY/EVENT, NO BUBBLE)]==]
+    local _stop = [==[-- VOID HUB V1 / UNIFIED COMMAND CENTER LAYOUT]==]
+    local _from = string.find(_body, _start, 1, true)
+    local _to = _from and string.find(_body, _stop, _from + #_start, true)
+    if not _from or not _to then
+        error("[VOID HUB Counter TP V11] module boundaries missing")
+    end
+    local _ct = string.sub(_body, _from, _to - 1)
+    local _edits = {
+        { [==[    local COUNTER_IMPACT_ECHO_SECONDS = 0.18]==], [==[    local COUNTER_IMPACT_ECHO_SECONDS = 0.06 -- de-duplication per impact still applies]==] },
+        { [==[            -- State/animation echoes from our OWN carry must not requeue
+            -- Counter TP. A genuine new health loss still counts.
+            if not actualDamage and isOwnCounterTPWindow() then return end]==], [==[            -- A follow-up scan is only scheduled AFTER genuine HealthChanged.
+            -- Do not discard this second hit just because our previous
+            -- outgoing Counter TP is still finishing its handoff.
+            -- Non-damage animation echoes remain rejected above.]==] },
+        { [==[            if not simultaneousTargets
+                and (now - (lastQueuedForTarget[target.UserId] or -math.huge)
+                        < COUNTER_IMPACT_ECHO_SECONDS
+                    or now - lastQueuedAnyAt < COUNTER_CROSS_TARGET_ECHO_SECONDS) then
+                return
+            end]==], [==[            -- No global cross-target lockout: another genuine HP loss may
+            -- occur while the previous attack is still being handled.
+            -- queuedThisImpact and the short per-target echo interval below
+            -- still deduplicate this SAME damage event.]==] },
+        { [==[                    local queueTTL = item.multiHit and 5.2 or 1.4]==], [==[                    local queueTTL = item.multiHit and 5.2 or 2.4]==] },
+        { [==[                            os.clock() + 5.0)]==], [==[                            os.clock() + 1.0)]==] },
+        { [==[                            .. "not the target. Re-arms automatically in 5s.")]==], [==[                            .. "not the target. Re-arms automatically in 1s.")]==] }
+    }
+    for _, edit in ipairs(_edits) do
+        local i, j = string.find(_ct, edit[1], 1, true)
+        if not i or string.find(_ct, edit[1], j + 1, true) then
+            error("[VOID HUB Counter TP V11] incompatible patch: "
+                .. string.sub(edit[1], 1, 75))
+        end
+        _ct = string.sub(_ct, 1, i - 1)
+            .. edit[2] .. string.sub(_ct, j + 1)
+    end
+    _body = string.sub(_body, 1, _from - 1)
+        .. _ct .. string.sub(_body, _to)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
