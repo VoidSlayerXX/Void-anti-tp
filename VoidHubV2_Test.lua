@@ -2685,6 +2685,237 @@ do
         .. _block .. string.sub(_body, _to)
 end
 
+-- Counter TP V9: correlate and queue up to three simultaneous verified attack animations.
+-- One real HP loss can correspond to up to three distinct matching attack
+-- animations. Queue each verified-looking player once, never by proximity.
+-- Preserve whitelist, one shared teleport owner, and V8 handoff safety.
+do
+    local _start = [==[-- DEFENSE: COUNTER TP (TARGETED CARRY/EVENT, NO BUBBLE)]==]
+    local _stop = [==[-- VOID HUB V1 / UNIFIED COMMAND CENTER LAYOUT]==]
+    local _from = string.find(_body, _start, 1, true)
+    local _to = _from and string.find(_body, _stop, _from + #_start, true)
+    if not _from or not _to then
+        error("[VOID HUB Counter TP V9] module boundaries missing")
+    end
+    local _module = string.sub(_body, _from, _to - 1)
+    local _replacements = {
+        { [==[    local function sendCounter(target, ownChar, revision)]==], [==[    -- Group simultaneous nearby attacks by distinct player identity.
+    -- Proximity ALONE is never evidence of a hit. Every candidate requires
+    -- one of the already recognized DEFAULT/V7 attack animation IDs very
+    -- near an actual HP-loss event; at most 3 distinct players are queued.
+    local function collectConcurrentAttackers(root, impactAt)
+        local results = {}
+        for _, other in ipairs(Players:GetPlayers()) do
+            if other ~= Player and other.Parent == Players
+                and not inPlayerList(State.Whitelist, other) then
+                local character = other.Character
+                local otherRoot = character
+                    and character:FindFirstChild("HumanoidRootPart")
+                local otherHum = character
+                    and character:FindFirstChildOfClass("Humanoid")
+                local recent = nearTimes[other.UserId]
+                local wasNear = recent and impactAt - recent <= 0.40
+                if otherRoot and otherHum and otherHum.Health > 0
+                    and (wasNear or
+                        (otherRoot.Position - root.Position).Magnitude <= radius + 1) then
+                    local history = recentUnknownAnimations[other]
+                    local matchId = nil
+                    if history then
+                        for index = #history, 1, -1 do
+                            local event = history[index]
+                            -- Verified DEFAULT ID and observed V7 style IDs.
+                            -- A narrow window avoids treating distant idle
+                            -- animations as attacks during a chaotic fight.
+                            if event.character == character
+                                and (event.id == V5_FIST_ID
+                                    or V7_STYLE_CANDIDATES[event.id])
+                                and event.at >= impactAt - 0.22
+                                and event.at <= impactAt + 0.12 then
+                                matchId = event.id
+                                break
+                            end
+                        end
+                    end
+                    if matchId then
+                        results[#results + 1] = {
+                            player = other,
+                            character = character,
+                            animationId = matchId
+                        }
+                    end
+                end
+            end
+        end
+        -- Never send to more than three targets for one damage event.
+        -- A fourth eligible attacker is left to a subsequent real hit.
+        return results
+    end
+
+    local function sendCounter(target, ownChar, revision)]==] },
+        { [==[                if not alive or not enabled or revision ~= generation
+                    or Player.Character ~= character or other.Character ~= c
+                    or isOwnCounterTPWindow() then return end]==], [==[                if not alive or not enabled or revision ~= generation
+                    or Player.Character ~= character or other.Character ~= c
+                    then return end
+                -- Continue recording REAL animations during our own
+                -- outgoing Counter TP. Other attackers may strike while the
+                -- earlier request is in-flight, and their evidence must not
+                -- disappear during the send window.
+                local wasOutgoingCounter = isOwnCounterTPWindow()]==] },
+        { [==[                if combat and hit then hit("Nearby attack", 0, nil, other) end]==], [==[                if combat and hit and not wasOutgoingCounter then
+                    hit("Nearby attack", 0, nil, other)
+                end]==] },
+        { [==[            if explicitAttacker and nearby(explicitAttacker, root) then
+                target, reason = explicitAttacker, "nearby punch animation"
+            else
+                target, reason = findAttacker(hum, root)
+            end
+            if not retry then]==], [==[            if explicitAttacker and nearby(explicitAttacker, root) then
+                target, reason = explicitAttacker, "nearby punch animation"
+            else
+                target, reason = findAttacker(hum, root)
+            end
+            local simultaneousTargets = nil
+            if actualDamage and not retry then
+                local matched = collectConcurrentAttackers(root, now)
+                if #matched >= 2 then
+                    -- Each target has independent attack-animation evidence
+                    -- near the SAME actual HP-loss event.
+                    -- Never add an unknown player based on proximity alone.
+                    if #matched > 3 then
+                        f9HitTracker("V9_MULTI_LIMIT", nil,
+                            tostring(#matched) .. " candidates; first three only")
+                        while #matched > 3 do table.remove(matched) end
+                    end
+                    simultaneousTargets = matched
+                    target = matched[1].player
+                    reason = "V9 " .. tostring(#matched)
+                        .. " separately matched attacking players"
+                    f9HitTracker("V9_MULTI_MATCH", target,
+                        tostring(#matched) .. " players with attack animations"
+                        .. " near HP loss; sending sequentially")
+                end
+            end
+            if not retry then]==] },
+        { [==[            if now - (lastQueuedForTarget[target.UserId] or -math.huge)
+                    < COUNTER_IMPACT_ECHO_SECONDS
+                or now - lastQueuedAnyAt < COUNTER_CROSS_TARGET_ECHO_SECONDS then
+                return
+            end
+            if #hitQueue >= MAX_HIT_QUEUE then
+                render("Counter TP queue full; refusing excessive overlapping requests.")
+                return
+            end
+            lastQueuedForTarget[target.UserId] = now
+            lastQueuedAnyAt = now
+            table.insert(hitQueue, {target = target, at = now, signal = signal})
+            f9HitTracker("QUEUED", target, "type=" .. tostring(signal)
+                .. " queue=" .. tostring(#hitQueue))
+            Gui:SetAttribute("CounterTPHitPending", true)
+            render(("%s from %s queued (%d hit%s).")
+                :format(signal, target.Name, #hitQueue,
+                    #hitQueue == 1 and "" or "s"))]==], [==[            if not simultaneousTargets
+                and (now - (lastQueuedForTarget[target.UserId] or -math.huge)
+                        < COUNTER_IMPACT_ECHO_SECONDS
+                    or now - lastQueuedAnyAt < COUNTER_CROSS_TARGET_ECHO_SECONDS) then
+                return
+            end
+            local enqueueEntries = simultaneousTargets
+                or {{player = target, character = target.Character}}
+            local inserted = 0
+            for _, entry in ipairs(enqueueEntries) do
+                local candidate = entry.player
+                -- An attacker already counted for an earlier punch does not
+                -- get duplicated, but NEW attackers from this simultaneous
+                -- impact still enter the queue.
+                if #hitQueue < MAX_HIT_QUEUE
+                    and candidate.Parent == Players
+                    and not inPlayerList(State.Whitelist, candidate)
+                    and now - (lastQueuedForTarget[candidate.UserId] or -math.huge)
+                        >= COUNTER_IMPACT_ECHO_SECONDS then
+                    lastQueuedForTarget[candidate.UserId] = now
+                    table.insert(hitQueue, {
+                        target = candidate, at = now, signal = signal,
+                        multiHit = simultaneousTargets ~= nil,
+                        character = entry.character,
+                        impactOrigin = root.Position,
+                    })
+                    inserted += 1
+                    f9HitTracker(simultaneousTargets
+                        and "V9_MULTI_QUEUED" or "QUEUED", candidate,
+                        "type=" .. tostring(signal)
+                        .. " queue=" .. tostring(#hitQueue)
+                        .. (entry.animationId
+                            and (" animationID=" .. entry.animationId) or ""))
+                end
+            end
+            if inserted == 0 then
+                if #hitQueue >= MAX_HIT_QUEUE then
+                    render("Counter TP queue full; new hits remain enabled.")
+                end
+                return
+            end
+            lastQueuedAnyAt = now
+            Gui:SetAttribute("CounterTPHitPending", true)
+            if simultaneousTargets then
+                render(("V9 %d attackers queued separately; no blind targeting.")
+                    :format(inserted))
+            else
+                render(("%s from %s queued (%d hit%s).")
+                    :format(signal, target.Name, #hitQueue,
+                        #hitQueue == 1 and "" or "s"))
+            end]==] },
+        { [==[                    local timeoutAt = math.min(item.at + 1.4,
+                        os.clock() + 1.4)]==], [==[                    -- Three separately validated targets need time for up
+                    -- to three SERIAL server handoffs; do not expire the
+                    -- third attacker while the first two are processing.
+                    -- Preserve the short default timeout for single hits.
+                    local queueTTL = item.multiHit and 3.6 or 1.4
+                    local timeoutAt = math.min(item.at + queueTTL,
+                        os.clock() + queueTTL)]==] },
+        { [==[                    if alive and enabled and not counterSafetyPaused()
+                        and revision == generation
+                        and Player.Character == character
+                        and item.target.Parent == Players]==], [==[                    local validMultiTarget = true
+                    if item.multiHit then
+                        local theirCharacter = item.target.Character
+                        local theirRoot = theirCharacter
+                            and theirCharacter:FindFirstChild("HumanoidRootPart")
+                        local theirHum = theirCharacter
+                            and theirCharacter:FindFirstChildOfClass("Humanoid")
+                        validMultiTarget = theirCharacter == item.character
+                            and theirRoot ~= nil and theirHum ~= nil
+                            and theirHum.Health > 0 and item.impactOrigin ~= nil
+                            and (theirRoot.Position - item.impactOrigin).Magnitude
+                                <= radius + 5
+                    end
+                    if alive and enabled and not counterSafetyPaused()
+                        and revision == generation
+                        and Player.Character == character
+                        and validMultiTarget
+                        and item.target.Parent == Players]==] },
+        { [==[                    elseif alive and enabled and revision == generation then
+                        render(remotes() and
+                            ("Hit from %s expired before sending: another "]==], [==[                    elseif alive and enabled and revision == generation then
+                        if item.multiHit then
+                            f9HitTracker("V9_MULTI_SKIPPED", item.target,
+                                "target moved/respawned, guarded, or queue expired")
+                        end
+                        render(remotes() and
+                            ("Hit from %s expired before sending: another "]==] },
+    }
+    for _, entry in ipairs(_replacements) do
+        local a, b = string.find(_module, entry[1], 1, true)
+        if not a or string.find(_module, entry[1], b + 1, true) then
+            error("[VOID HUB Counter TP V9] incompatible multi-hit patch")
+        end
+        _module = string.sub(_module, 1, a - 1)
+            .. entry[2] .. string.sub(_module, b + 1)
+    end
+    _body = string.sub(_body, 1, _from - 1)
+        .. _module .. string.sub(_body, _to)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
