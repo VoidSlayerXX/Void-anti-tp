@@ -1845,6 +1845,53 @@ do
         .. _walk .. string.sub(_body, _to)
 end
 
+-- Bring ALL V2 half-second cadence; whitelist and single Bring unchanged.
+do
+    local _begin = [==[    local card = makeFeatureCard(page, "Bring / Carry", 0)]==]
+    local _end = [==[    -- Anti Grab V181:]==]
+    local _from = string.find(_body, _begin, 1, true)
+    local _to = _from and string.find(_body, _end, _from + #_begin, true)
+    if not _from or not _to then error("[VOID HUB Bring ALL] module boundaries missing") end
+    local _block = string.sub(_body, _from, _to - 1)
+    local _edits = {
+        { [==[    local BRING_PLAYER_INTERVAL = 0.28 -- normal Bring and Bring All only
+    local BRING2_CARRY_WAIT = 0.08]==], [==[    local BRING_PLAYER_INTERVAL = 0.28 -- normal single Bring slot
+    local BRING_ALL_INTERVAL = 0.50 -- minimum start-to-start interval per ALL target
+    local BRING2_CARRY_WAIT = 0.08]==] },
+        { [==[                local completed, failed, unavailable = 0, 0, 0
+                for i, other in ipairs(targets) do]==], [==[                local completed, failed, unavailable = 0, 0, 0
+                local nextBringAllRequestAt = 0
+                for i, other in ipairs(targets) do]==] },
+        { [==[                            if not bringBusy and SharedTeleportOwner == nil
+                                and now >= SharedTeleportCooldownUntil
+                                and now >= bringAllPauseUntil
+                                and not isManualGrabWindow() and not DeathTPIsEscaping then]==], [==[                            if not bringBusy and SharedTeleportOwner == nil
+                                and now >= SharedTeleportCooldownUntil
+                                and now >= bringAllPauseUntil
+                                and now >= nextBringAllRequestAt
+                                and not isManualGrabWindow() and not DeathTPIsEscaping then]==] },
+        { [==[                                local desired = fixedOrigin.Position
+                                local ok = tryBringSequence(other, false, nil, desired)
+                                if ok then completed += 1 else failed += 1 end]==], [==[                                local desired = fixedOrigin.Position
+                                -- Mark the request start, not its completion:
+                                -- one new target at least every 0.5s, when ready.
+                                nextBringAllRequestAt = os.clock() + BRING_ALL_INTERVAL
+                                local ok = tryBringSequence(other, false, nil, desired)
+                                if ok then completed += 1 else failed += 1 end]==] },
+        { [==[                        status.Text = ("ALL: %d requests sent | %d failed | %d unavailable | %d selected. BRING cancels.")]==], [==[                        status.Text = ("ALL (0.5s/player): %d requests sent | %d failed | %d unavailable | %d selected. BRING cancels.")]==] },
+    }
+    for _, edit in ipairs(_edits) do
+        local first, last = string.find(_block, edit[1], 1, true)
+        if not first or string.find(_block, edit[1], last + 1, true) then
+            error("[VOID HUB Bring ALL] half-second cadence patch conflict")
+        end
+        _block = string.sub(_block, 1, first - 1)
+            .. edit[2] .. string.sub(_block, last + 1)
+    end
+    _body = string.sub(_body, 1, _from - 1)
+        .. _block .. string.sub(_body, _to)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
