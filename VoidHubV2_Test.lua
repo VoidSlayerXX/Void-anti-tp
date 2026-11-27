@@ -1519,8 +1519,8 @@ do
         return one, one and "recent contact" or "no unique attacker within 9 studs (or target whitelisted)"]==], [==[        -- Never target a player solely because they are the nearest or
         -- the ONLY other player in the server.
         return nil, "no V5 fist animation matched HP loss and no damage tag"]==] },
-        { [==[                local combat = name:find("punch", 1, true)]==], [==[                local id = animation and tostring(animation.AnimationId)
-                    :match("(%d+)$") or nil
+        { [==[                local combat = name:find("punch", 1, true)]==], [==[                local idString = animation and tostring(animation.AnimationId) or ""
+                local id = string.match(idString, "(%d+)$")
                 if id == V5_FIST_ID then
                     local history = recentV5Fists[other] or {}
                     recentV5Fists[other] = history
