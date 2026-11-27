@@ -2384,6 +2384,130 @@ do
         .. string.sub(_body, _to)
 end
 
+-- Counter TP V8: reliable serial Carry/Event/Stop with one verified fallback.
+-- Preserve DEFAULT V5 and V7 multi-style matching, add Midnight Blade.
+-- Keep the same whitelist and shared remote owner. Retry is limited to the
+-- same confirmed damage/animation target and cannot overlap other actions.
+do
+    local _start = [==[-- DEFENSE: COUNTER TP (TARGETED CARRY/EVENT, NO BUBBLE)]==]
+    local _stop = [==[-- VOID HUB V1 / UNIFIED COMMAND CENTER LAYOUT]==]
+    local _from = string.find(_body, _start, 1, true)
+    local _to = _from and string.find(_body, _stop, _from + #_start, true)
+    if not _from or not _to then error("[VOID HUB Counter TP V8] module missing") end
+    local _part = string.sub(_body, _from, _to - 1)
+    local _changes = {
+        { [==[        ["86906347478990"] = "Gojo test"
+    }]==], [==[        ["86906347478990"] = "Gojo test",
+        ["72156524420062"] = "Midnight Blade test"
+    }]==] },
+        { [==[        local targetRoot = target.Character
+            and target.Character:FindFirstChild("HumanoidRootPart")]==], [==[        -- Keep the same target character during a possible failed handoff.
+        local targetChar = target.Character
+        local targetRoot = targetChar
+            and targetChar:FindFirstChild("HumanoidRootPart")]==] },
+        { [==[            task.wait(0.035)
+            if alive and enabled and revision == generation]==], [==[            -- 0.035s can release before a remote carry is established.
+            task.wait(0.085)
+            if alive and enabled and revision == generation]==] },
+        { [==[        if didCarry then
+            task.wait(0.015)
+            if Player.Character == ownChar and not isManualGrabWindow() then]==], [==[        if didCarry then
+            -- Give the event a brief handoff before StopCarry releases it.
+            task.wait(0.05)
+            if Player.Character == ownChar and not isManualGrabWindow() then]==] },
+        { [==[        if alive and enabled and revision == generation then
+            if ok and didEvent then
+                attempts += 1]==], [==[        -- Only if the first event was sent and the same target has NOT
+        -- moved to classroom, permit one safe second handshake. Keep
+        -- CounterTP as the single remote owner through both attempts.
+        local retrySent = false
+        if ok and didEvent and targetWasAway then
+            local deadline = os.clock() + 0.24
+            while os.clock() < deadline
+                and not targetReachedClassroom and not selfMovedToClassroom
+                and alive and enabled and revision == generation do
+                task.wait(0.03)
+            end
+            local targetHum = targetChar
+                and targetChar:FindFirstChildOfClass("Humanoid")
+            local stillAtStart = targetRoot and targetBefore
+                and targetRoot.Parent == targetChar
+                and (targetRoot.Position - targetBefore).Magnitude <= 11
+            local stillNearby = targetRoot and root and root.Parent
+                and (targetRoot.Position - root.Position).Magnitude <= radius + 3
+            local safeRetry = alive and enabled and revision == generation
+                and Player.Character == ownChar and hum.Health > 0
+                and root and root.Parent and not root.Anchored
+                and target.Parent == Players
+                and target.Character == targetChar
+                and targetHum and targetHum.Health > 0
+                and not inPlayerList(State.Whitelist, target)
+                and stillAtStart and stillNearby and farFromClassroom
+                and not targetReachedClassroom and not selfMovedToClassroom
+                and SharedTeleportOwner == "CounterTP"
+                and Gui:GetAttribute("AntiGrabClassroomPending") ~= true
+                and Gui:GetAttribute("AntiRagdollClassroomTripActive") ~= true
+                and not counterSafetyPaused()
+                and not DeathTPIsEscaping and not isManualGrabWindow()
+                and (root.Position - CLASSROOM_POSITION).Magnitude >= 30
+            if safeRetry then
+                f9HitTracker("V8_HANDOFF_RETRY", target,
+                    "first request not confirmed; same target still nearby")
+                local secondCarry = false
+                local retryOk, retryError = pcall(function()
+                    carry:FireServer(target, round(offset.X), round(offset.Y),
+                        round(offset.Z), 0, 0, 0)
+                    secondCarry = true
+                    task.wait(0.10)
+                    local validNow = alive and enabled
+                        and revision == generation
+                        and Player.Character == ownChar
+                        and hum.Health > 0 and target.Parent == Players
+                        and target.Character == targetChar
+                        and targetHum.Health > 0
+                        and not inPlayerList(State.Whitelist, target)
+                        and not targetReachedClassroom and not selfMovedToClassroom
+                        and SharedTeleportOwner == "CounterTP"
+                        and not DeathTPIsEscaping and not isManualGrabWindow()
+                        and (root.Position - CLASSROOM_POSITION).Magnitude >= 30
+                    if validNow then
+                        ev:FireServer()
+                        retrySent = true
+                        f9HitTracker("V8_CLASSROOM_RETRY_SENT", target,
+                            "second and final handoff; server not yet confirmed")
+                        task.wait(0.05)
+                    end
+                end)
+                if secondCarry and Player.Character == ownChar
+                    and not isManualGrabWindow() then
+                    pcall(function() stop:FireServer() end)
+                end
+                if not retryOk then
+                    f9HitTracker("V8_RETRY_ERROR", target, tostring(retryError))
+                end
+            end
+        end
+
+        if alive and enabled and revision == generation then
+            if ok and didEvent then
+                attempts += 1]==] },
+        { [==[                    f9HitTracker("ARRIVAL_UNCONFIRMED", target,
+                        ("moved %.1f studs"):format(moved))]==], [==[                    f9HitTracker("ARRIVAL_UNCONFIRMED", target,
+                        ("moved %.1f studs; retrySent=%s"):format(
+                            moved, tostring(retrySent)))]==] },
+    }
+    for _, edit in ipairs(_changes) do
+        local a, b = string.find(_part, edit[1], 1, true)
+        if not a or string.find(_part, edit[1], b+1, true) then
+            error("[VOID HUB Counter TP V8] incompatible request patch")
+        end
+        _part = string.sub(_part, 1, a-1)
+            .. edit[2] .. string.sub(_part, b+1)
+    end
+    _body = string.sub(_body, 1, _from-1)
+        .. _part .. string.sub(_body, _to)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
