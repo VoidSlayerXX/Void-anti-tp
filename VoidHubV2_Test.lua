@@ -1845,7 +1845,7 @@ do
         .. _walk .. string.sub(_body, _to)
 end
 
--- Bring ALL V2 half-second cadence; whitelist and single Bring unchanged.
+-- Bring ALL V2 serial cadence; whitelist and single Bring unchanged.
 do
     local _begin = [==[    local card = makeFeatureCard(page, "Bring / Carry", 0)]==]
     local _end = [==[    -- Anti Grab V181:]==]
@@ -1856,7 +1856,7 @@ do
     local _edits = {
         { [==[    local BRING_PLAYER_INTERVAL = 0.28 -- normal Bring and Bring All only
     local BRING2_CARRY_WAIT = 0.08]==], [==[    local BRING_PLAYER_INTERVAL = 0.28 -- normal single Bring slot
-    local BRING_ALL_INTERVAL = 0.50 -- minimum start-to-start interval per ALL target
+    local BRING_ALL_INTERVAL = 0.20 -- minimum start-to-start interval per ALL target
     local BRING2_CARRY_WAIT = 0.08]==] },
         { [==[                local completed, failed, unavailable = 0, 0, 0
                 for i, other in ipairs(targets) do]==], [==[                local completed, failed, unavailable = 0, 0, 0
@@ -1874,22 +1874,153 @@ do
                                 local ok = tryBringSequence(other, false, nil, desired)
                                 if ok then completed += 1 else failed += 1 end]==], [==[                                local desired = fixedOrigin.Position
                                 -- Mark the request start, not its completion:
-                                -- one new target at least every 0.5s, when ready.
+                                -- one new target at least every 0.2s, when ready.
                                 nextBringAllRequestAt = os.clock() + BRING_ALL_INTERVAL
                                 local ok = tryBringSequence(other, false, nil, desired)
                                 if ok then completed += 1 else failed += 1 end]==] },
-        { [==[                        status.Text = ("ALL: %d requests sent | %d failed | %d unavailable | %d selected. BRING cancels.")]==], [==[                        status.Text = ("ALL (0.5s/player): %d requests sent | %d failed | %d unavailable | %d selected. BRING cancels.")]==] },
+        { [==[                        status.Text = ("ALL: %d requests sent | %d failed | %d unavailable | %d selected. BRING cancels.")]==], [==[                        status.Text = ("ALL (0.2s/player): %d requests sent | %d failed | %d unavailable | %d selected. BRING cancels.")]==] },
     }
     for _, edit in ipairs(_edits) do
         local first, last = string.find(_block, edit[1], 1, true)
         if not first or string.find(_block, edit[1], last + 1, true) then
-            error("[VOID HUB Bring ALL] half-second cadence patch conflict")
+            error("[VOID HUB Bring ALL] serial cadence patch conflict")
         end
         _block = string.sub(_block, 1, first - 1)
             .. edit[2] .. string.sub(_block, last + 1)
     end
     _body = string.sub(_body, 1, _from - 1)
         .. _block .. string.sub(_body, _to)
+end
+
+-- Bring ALL V2 0.2-second serial handoff and camera-before self return.
+-- Targets are still selected by original whitelist rules. Single Bring,
+-- Anti-Grab and Counter TP remain untouched.
+do
+    local _start = [==[    local card = makeFeatureCard(page, "Bring / Carry", 0)]==]
+    local _end = [==[    -- Anti Grab V181:]==]
+    local _from = string.find(_body, _start, 1, true)
+    local _to = _from and string.find(_body, _end, _from + #_start, true)
+    if not _from or not _to then
+        error("[VOID HUB Bring ALL] rapid return module boundaries missing")
+    end
+    local _bring = string.sub(_body, _from, _to - 1)
+    local _changes = {
+        { [==[    local bringAllPauseUntil = -math.huge
+    local bringAllCorrectedCount = 0]==], [==[    local bringAllPauseUntil = -math.huge
+    local bringAllCorrectedCount = 0
+    -- Fast return runs before camera movement. It is used ONLY for an
+    -- unmistakable self-Classroom snap after our outgoing Bring event.
+    local bringAllFastReturnReady = false
+    local bringAllFastReturnUntil = -math.huge
+    local bringAllFastReturnCorrections = 0
+    local bringAllFastReturnLastAt = -math.huge
+    local bringAllFastReturnBindName =
+        "VoidHub_BringAll_FastSelfReturn_" .. tostring(Player.UserId)]==] },
+        { [==[    local function stopBringAllGuard()
+        if bringAllGuardConnection then
+            bringAllGuardConnection:Disconnect()
+            bringAllGuardConnection = nil
+        end]==], [==[    local function stopBringAllGuard()
+        if bringAllGuardConnection then
+            bringAllGuardConnection:Disconnect()
+            bringAllGuardConnection = nil
+        end
+        pcall(function()
+            RunService:UnbindFromRenderStep(bringAllFastReturnBindName)
+        end)
+        bringAllFastReturnReady = false
+        bringAllFastReturnUntil = -math.huge]==] },
+        { [==[    local function startBringAllGuard(anchor, character, revision)]==], [==[    local function fastBringAllReturnBeforeCamera()
+        if not bringAllFastReturnReady or not bringAllAnchorCFrame
+            or not sendingAll or not Gui.Parent or shuttingDown
+            or Player.Character ~= bringAllAnchorCharacter
+            or bringAllGuardRevision ~= activeRevision
+            or DeathTPIsEscaping or isManualGrabWindow()
+            or Gui:GetAttribute("AntiGrabRecovering") == true then
+            return
+        end
+        local now = os.clock()
+        if now > bringAllFastReturnUntil
+            or bringAllFastReturnCorrections >= 3
+            or now - bringAllFastReturnLastAt < 0.035 then return end
+        local character = bringAllAnchorCharacter
+        local root = character:FindFirstChild("HumanoidRootPart")
+        local h = character:FindFirstChildOfClass("Humanoid")
+        if not root or not h or h.Health <= 0
+            or root.Anchored or h.PlatformStand or h.Sit then return end
+        local anchor = bringAllAnchorCFrame
+        -- Never snap a player who originally stood IN the classroom.
+        if (anchor.Position - EVENT_CFRAME.Position).Magnitude < 80 then return end
+        local pos = root.Position
+        if (pos - EVENT_CFRAME.Position).Magnitude > 38
+            or (pos - anchor.Position).Magnitude < 22 then return end
+        -- Only restore our OWN character after the Event teleport request.
+        -- No extra server requests, no anchoring, and no per-frame CFrame pin.
+        local ok = pcall(function()
+            root.CFrame = CFrame.new(anchor.Position) * root.CFrame.Rotation
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+        end)
+        if ok then
+            bringAllFastReturnCorrections += 1
+            bringAllFastReturnLastAt = now
+            AntiTPIntentionalTeleportUntil = math.max(
+                AntiTPIntentionalTeleportUntil, now + 0.12)
+        end
+    end
+
+    local function startBringAllGuard(anchor, character, revision)]==] },
+        { [==[        bringAllGuardConnection = RunService.Heartbeat:Connect(function()]==], [==[        -- The render binding runs before the default camera update, so a
+        -- recognized classroom snap can be repaired in the same visual frame.
+        -- If the executor blocks BindToRenderStep, keep the Heartbeat fallback.
+        pcall(function()
+            RunService:BindToRenderStep(bringAllFastReturnBindName,
+                Enum.RenderPriority.Camera.Value - 5,
+                fastBringAllReturnBeforeCamera)
+        end)
+        bringAllGuardConnection = RunService.Heartbeat:Connect(function()
+            fastBringAllReturnBeforeCamera()]==] },
+        { [==[        local started = os.clock()
+        local carried, eventSent = false, false
+        bringBusy = true]==], [==[        local started = os.clock()
+        local carried, eventSent = false, false
+        if sendingAll and not gymbanMode then
+            -- During CarryRequest handoff, never counter our own target.
+            bringAllFastReturnReady = false
+            bringAllFastReturnCorrections = 0
+        end
+        bringBusy = true]==] },
+        { [==[            event:FireServer()
+            eventSent = true
+            task.wait(gymbanMode and GYMBAN_EVENT_WAIT]==], [==[            event:FireServer()
+            eventSent = true
+            if sendingAll and not gymbanMode then
+                -- Event has been issued. Correct only visible SELF jumps
+                -- to classroom, not normal movement or the target teleport.
+                bringAllFastReturnReady = true
+                bringAllFastReturnUntil = os.clock() + 0.85
+            end
+            task.wait(gymbanMode and GYMBAN_EVENT_WAIT]==] },
+        { [==[        local requestSlot = gymbanMode and GYMBAN_LOOP_INTERVAL
+            or BRING_PLAYER_INTERVAL]==], [==[        local requestSlot = gymbanMode and GYMBAN_LOOP_INTERVAL
+            or (sendingAll and BRING_ALL_INTERVAL or BRING_PLAYER_INTERVAL)]==] },
+        { [==[                SharedTeleportCooldownUntil, os.clock() + 0.02)
+        end
+        bringBusy = false]==], [==[                SharedTeleportCooldownUntil,
+                os.clock() + (sendingAll and 0 or 0.02))
+        end
+        bringBusy = false]==] },
+    }
+    for _, change in ipairs(_changes) do
+        local a, b = string.find(_bring, change[1], 1, true)
+        if not a or string.find(_bring, change[1], b + 1, true) then
+            error("[VOID HUB Bring ALL] ambiguous 0.2s/return patch")
+        end
+        _bring = string.sub(_bring, 1, a - 1)
+            .. change[2] .. string.sub(_bring, b + 1)
+    end
+    _body = string.sub(_body, 1, _from - 1) .. _bring
+        .. string.sub(_body, _to)
 end
 
 local _compiled, _compileErr = loadstring(_body)
