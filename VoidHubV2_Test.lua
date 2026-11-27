@@ -1301,6 +1301,91 @@ do
     _body = string.sub(_body, 1, _from - 1) .. _block .. string.sub(_body, _to)
 end
 
+-- Counter TP V2: deduplicate single-hit echoes and avoid double Classroom sends.
+do
+    local _startTag = "-- DEFENSE: COUNTER TP (TARGETED CARRY/EVENT, NO BUBBLE)"
+    local _endTag = "-- VOID HUB V1 / UNIFIED COMMAND CENTER LAYOUT"
+    local _from = string.find(_body, _startTag, 1, true)
+    local _to = _from and string.find(_body, _endTag, _from + #_startTag, true)
+    if not _from or not _to then error("[VOID HUB CounterTP] module boundaries missing") end
+    local _counterBlock = string.sub(_body, _from, _to - 1)
+    local _replacements = {
+        { [==[    local MAX_HIT_QUEUE = 8]==], [==[    local MAX_HIT_QUEUE = 8
+    -- One actual impact may replicate as damage + stagger + animation.
+    -- Merge only the same attack's echoes, not later distinct hits.
+    local COUNTER_IMPACT_ECHO_SECONDS = 0.42
+    local COUNTER_CROSS_TARGET_ECHO_SECONDS = 0.10
+    local lastQueuedForTarget = {}
+    local lastQueuedAnyAt = -math.huge]==] },
+        { [==[            if retry then unresolvedHitId += 1 end
+            -- No target cooldown or global hit cooldown. A real damage event
+            -- becomes one request, even if an earlier request is in progress.]==], [==[            if retry then unresolvedHitId += 1 end
+            -- Anti-Grab already owns the same physical grab: do not queue
+            -- another Classroom teleport just because damage also changed.
+            if Gui:GetAttribute("AntiGrabClassroomPending") == true
+                or SharedTeleportOwner == "AntiGrabCounter" then
+                render("Incoming grab is already handled by Anti-Grab.")
+                return
+            end
+            -- Merge only duplicate signals from one impact. Real later
+            -- hits still rearm automatically after this short echo window.
+            if now - (lastQueuedForTarget[target.UserId] or -math.huge)
+                    < COUNTER_IMPACT_ECHO_SECONDS
+                or now - lastQueuedAnyAt < COUNTER_CROSS_TARGET_ECHO_SECONDS then
+                return
+            end]==] },
+        { [==[            table.insert(hitQueue, {target = target, at = now, signal = signal})
+            Gui:SetAttribute("CounterTPHitPending", true)]==], [==[            lastQueuedForTarget[target.UserId] = now
+            lastQueuedAnyAt = now
+            table.insert(hitQueue, {target = target, at = now, signal = signal})
+            Gui:SetAttribute("CounterTPHitPending", true)]==] },
+        { [==[    local function detach()
+        table.clear(hitQueue)
+        queueWorkerRunning = false]==], [==[    local function detach()
+        table.clear(hitQueue)
+        table.clear(lastQueuedForTarget)
+        lastQueuedAnyAt = -math.huge
+        queueWorkerRunning = false]==] },
+        { [==[                        if os.clock() >= timeoutAt then break end
+                        task.wait(0.025)]==], [==[                        -- If this hit became a real grab, Anti-Grab handles
+                        -- it. Drop this queued counter instead of sending a
+                        -- second event after Anti-Grab's handoff finishes.
+                        if Gui:GetAttribute("AntiGrabClassroomPending") == true
+                            or SharedTeleportOwner == "AntiGrabCounter" then
+                            item.skipBecauseGrab = true
+                            break
+                        end
+                        if os.clock() >= timeoutAt then break end
+                        task.wait(0.025)]==] },
+        { [==[                        and not busy and SharedTeleportOwner == nil
+                        and os.clock() >= SharedTeleportCooldownUntil]==], [==[                        and not item.skipBecauseGrab
+                        and Gui:GetAttribute("AntiGrabClassroomPending") ~= true
+                        and not busy and SharedTeleportOwner == nil
+                        and os.clock() >= SharedTeleportCooldownUntil]==] },
+        { [==[                and not isManualGrabWindow()
+                and not DeathTPIsEscaping then
+                ev:FireServer()]==], [==[                and not isManualGrabWindow()
+                and not DeathTPIsEscaping
+                -- A carry can already teleport our avatar; never follow it
+                -- with an untargeted second Classroom event.
+                and not ((root.Position - CLASSROOM_POSITION).Magnitude < 30
+                    and (originalCFrame.Position - CLASSROOM_POSITION).Magnitude > 50)
+                then
+                ev:FireServer()]==] },
+    }
+    for _, edit in ipairs(_replacements) do
+        local first, last = string.find(_counterBlock, edit[1], 1, true)
+        if not first or string.find(_counterBlock, edit[1], last + 1, true) then
+            error("[VOID HUB CounterTP] ambiguous patch marker: "
+                .. string.sub(edit[1], 1, 60))
+        end
+        _counterBlock = string.sub(_counterBlock, 1, first - 1)
+            .. edit[2] .. string.sub(_counterBlock, last + 1)
+    end
+    _body = string.sub(_body, 1, _from - 1)
+        .. _counterBlock .. string.sub(_body, _to)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
