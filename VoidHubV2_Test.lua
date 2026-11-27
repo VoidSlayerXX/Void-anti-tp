@@ -2253,6 +2253,85 @@ do
         .. _after .. string.sub(_body, _b + 1)
 end
 
+-- Counter TP V7 multi-style verified-damage candidates (no Wanda / Spiderman).
+-- Keep V5 default fists and V6 diagnostic logging. No additional remotes.
+do
+    local _start = [==[-- DEFENSE: COUNTER TP (TARGETED CARRY/EVENT, NO BUBBLE)]==]
+    local _stop = [==[-- VOID HUB V1 / UNIFIED COMMAND CENTER LAYOUT]==]
+    local _from = string.find(_body, _start, 1, true)
+    local _to = _from and string.find(_body, _stop, _from + #_start, true)
+    if not _from or not _to then error("[VOID HUB Counter TP V7] module missing") end
+    local _ct = string.sub(_body, _from, _to - 1)
+    local _changes = {
+        { [==[    local recentUnknownAnimations = {}
+    local lastUnknownTraceAt = -math.huge
+    local hitsDetected = 0]==], [==[    local recentUnknownAnimations = {}
+    local lastUnknownTraceAt = -math.huge
+    -- V7: candidate IDs obtained from controlled style-specific F9 tests.
+    -- These labels indicate where the ID was observed, NOT an exclusive
+    -- animation/style association. No Wanda/Spiderman IDs are included.
+    -- Midnight Blade awaits an unambiguous, readable animation ID.
+    local V7_STYLE_CANDIDATES = {
+        ["122662653497227"] = "Headless Horseman test",
+        ["115702978030472"] = "Guard test",
+        ["96782586660138"] = "Ultra Goku test",
+        ["86906347478990"] = "Gojo test"
+    }
+    local V7_DAMAGE_WINDOW_BEFORE = 0.12
+    local V7_DAMAGE_WINDOW_AFTER = 0.10
+    local hitsDetected = 0]==] },
+        { [==[        -- Never target a player solely because they are the nearest or
+        -- the ONLY other player in the server.
+        return nil, "no V5 fist animation matched HP loss and no damage tag"]==], [==[        -- V7: additional styles can use different punch/ability animations.
+        -- Accept only a short-timing match to an ACTUAL HP drop, from
+        -- exactly ONE eligible nearby player. A visual animation by itself,
+        -- or a nearby lone player without a matching ID, never triggers.
+        local v7Player, v7Count, v7Style, v7ID = nil, 0, nil, nil
+        for _, candidate in ipairs(Players:GetPlayers()) do
+            if close(candidate)
+                and not inPlayerList(State.Whitelist, candidate) then
+                local history = recentUnknownAnimations[candidate]
+                if history then
+                    for _, event in ipairs(history) do
+                        local style = V7_STYLE_CANDIDATES[event.id]
+                        if style and event.character == candidate.Character
+                            and event.at >= impactAt - V7_DAMAGE_WINDOW_BEFORE
+                            and event.at <= impactAt + V7_DAMAGE_WINDOW_AFTER then
+                            v7Count += 1
+                            v7Player, v7Style, v7ID = candidate, style, event.id
+                            -- Count each eligible player just once.
+                            break
+                        end
+                    end
+                end
+            end
+        end
+        if v7Count == 1 then
+            f9HitTracker("V7_STYLE_MATCH", v7Player,
+                "observed=" .. tostring(v7Style)
+                .. " id=" .. tostring(v7ID)
+                .. " + HP loss; probable, NOT confirmed")
+            return v7Player, "V7 timing+damage: " .. v7Style
+        elseif v7Count > 1 then
+            f9HitTracker("V7_AMBIGUOUS", nil,
+                tostring(v7Count) .. " players had candidate animations near damage")
+            return nil, "multiple V7 animation candidates; no blind teleport"
+        end
+        -- Never target a player solely because they are the nearest or
+        -- the ONLY other player in the server.
+        return nil, "no V5/V7 attack animation matched HP loss and no damage tag"]==] },
+    }
+    for _, pair in ipairs(_changes) do
+        local i, j = string.find(_ct, pair[1], 1, true)
+        if not i or string.find(_ct, pair[1], j+1, true) then
+            error("[VOID HUB Counter TP V7] incompatible style matcher")
+        end
+        _ct = string.sub(_ct, 1, i-1)
+            .. pair[2] .. string.sub(_ct, j+1)
+    end
+    _body = string.sub(_body, 1, _from-1) .. _ct .. string.sub(_body, _to)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
