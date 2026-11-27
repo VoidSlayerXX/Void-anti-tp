@@ -2508,6 +2508,183 @@ do
         .. _part .. string.sub(_body, _to)
 end
 
+-- AUTO BLOCK V3 predictive multi-style guard during punches.
+-- Keep the proven standing/idle F input untouched; detect known-style
+-- attack animations and briefly press F during manual punches.
+-- Protect manual F/G and whitelist, no fake damage or generic animation fades.
+do
+    local _start = [==[-- DEFENSE: AUTO BLOCK V187 - HELD REAL F BLOCK (NO FAKE HP)]==]
+    local _end = [==[-- Duplicate Defense Autodecline panel removed in V56.]==]
+    local _from = string.find(_body, _start, 1, true)
+    local _to = _from and string.find(_body, _end, _from + #_start, true)
+    if not _from or not _to then error("[VOID HUB Auto Block V3] module missing") end
+    local _block = string.sub(_body, _from, _to - 1)
+    local _edits = {
+        { [==[    local PUNCH_GRACE_SECONDS = 0.35 -- don't stomp real punches with F taps
+    local hiddenPoseRefresh = 0]==], [==[    local PUNCH_GRACE_SECONDS = 0.35 -- preserve manual punch priority
+    -- Reactive guard is ONLY for a known incoming attack while fighting.
+    -- Ordinary standing/moving F hold remains exactly as before.
+    local REACTIVE_BLOCK_RADIUS = 12
+    local REACTIVE_BLOCK_PULSE = 0.11
+    local REACTIVE_BLOCK_COOLDOWN = 0.22
+    local reactiveGuardUntil = -math.huge
+    local lastReactiveGuardAt = -math.huge
+    local reactiveOpponentRecords = {}
+    local REACTIVE_ATTACK_IDS = {
+        ["78215114906302"] = "Default",
+        ["122662653497227"] = "Headless Horseman",
+        ["115702978030472"] = "Guard",
+        ["96782586660138"] = "Ultra Goku",
+        ["86906347478990"] = "Gojo",
+        ["72156524420062"] = "Midnight Blade",
+    }
+    local hiddenPoseRefresh = 0]==] },
+        { [==[    local function pressF(ownerRevision)
+        if not alive or not enabled or keyDown or manualFDown or manualGDown
+            or os.clock() < manualPauseUntil
+            or UIS:IsKeyDown(Enum.KeyCode.G) or isPunching() then
+            return false, "paused"
+        end]==], [==[    local function pressF(ownerRevision, reactiveAttack)
+        if not alive or not enabled or keyDown or manualFDown or manualGDown
+            or (not reactiveAttack and os.clock() < manualPauseUntil)
+            or UIS:IsKeyDown(Enum.KeyCode.G)
+            or (not reactiveAttack and isPunching()) then
+            return false, "paused"
+        end]==] },
+        { [==[    local function threatNearby()
+        local now = os.clock()]==], [==[    -- Watch attack animations without altering normal block F behavior.
+    -- These IDs are style-testing candidates; the game may play them only
+    -- at impact, so this is best-effort prediction, not guaranteed parry.
+    local function removeReactiveOpponent(other)
+        local record = reactiveOpponentRecords[other]
+        if not record then return end
+        if record.animConn then record.animConn:Disconnect() end
+        if record.characterConn then record.characterConn:Disconnect() end
+        reactiveOpponentRecords[other] = nil
+    end
+
+    local function onReactiveAnimation(other, character, track)
+        if not alive or not enabled or not tapActive
+            or other.Character ~= character
+            or not isPunching() or keyDown
+            or manualFDown or manualGDown
+            or UIS:IsKeyDown(Enum.KeyCode.G)
+            or UIS:GetFocusedTextBox()
+            or os.clock() < manualPoseUntil
+            or os.clock() - lastManualRelease < MANUAL_F_GRACE
+            or Gui:GetAttribute("AntiGrabRecovering") == true then
+            return
+        end
+        local animation = track and track.Animation
+        local id = animation
+            and tostring(animation.AnimationId):match("(%d+)$")
+        local style = id and REACTIVE_ATTACK_IDS[id]
+        if not style then return end
+        local own = Player.Character
+        local ownHum = own and own:FindFirstChildOfClass("Humanoid")
+        local ownRoot = own and own:FindFirstChild("HumanoidRootPart")
+        local theirs = character:FindFirstChild("HumanoidRootPart")
+        local theirHum = character:FindFirstChildOfClass("Humanoid")
+        if not ownRoot or not ownHum or ownHum.Health <= 0
+            or ownHum.PlatformStand or ownHum.Sit
+            or not theirs or not theirHum or theirHum.Health <= 0
+            or other.Parent ~= Players
+            or inPlayerList(State.Whitelist, other)
+            or (theirs.Position - ownRoot.Position).Magnitude > REACTIVE_BLOCK_RADIUS
+            or os.clock() - lastReactiveGuardAt < REACTIVE_BLOCK_COOLDOWN then
+            return
+        end
+        local revision = tapRevision
+        local ok = pressF(revision, true)
+        if not ok then return end
+        local now = os.clock()
+        lastReactiveGuardAt = now
+        reactiveGuardUntil = now + REACTIVE_BLOCK_PULSE
+        print("[VOID HUB AUTO BLOCK V3] Reactive F: " .. style
+            .. " / " .. other.Name .. " / id=" .. id)
+        task.delay(REACTIVE_BLOCK_PULSE, function()
+            if not alive or not enabled
+                or revision ~= tapRevision then return end
+            -- A short pulse while punching. If punching ended, normal
+            -- standing F block takes ownership and can stay held.
+            if isPunching() then releaseF(false, revision) end
+        end)
+    end
+
+    local function watchReactiveOpponent(other)
+        if other == Player or reactiveOpponentRecords[other] then return end
+        local record = {character = nil, animConn = nil}
+        reactiveOpponentRecords[other] = record
+        local function attachOpponent(character)
+            if record.animConn then
+                record.animConn:Disconnect()
+                record.animConn = nil
+            end
+            record.character = character
+            task.spawn(function()
+                if not alive or not character then return end
+                local humanoid = character:FindFirstChildOfClass("Humanoid")
+                    or character:WaitForChild("Humanoid", 5)
+                local animator = humanoid and (
+                    humanoid:FindFirstChildOfClass("Animator")
+                    or humanoid:WaitForChild("Animator", 5))
+                if not alive or not animator
+                    or reactiveOpponentRecords[other] ~= record
+                    or record.character ~= character
+                    or other.Character ~= character then return end
+                record.animConn = animator.AnimationPlayed:Connect(function(track)
+                    onReactiveAnimation(other, character, track)
+                end)
+            end)
+        end
+        record.characterConn = other.CharacterAdded:Connect(attachOpponent)
+        if other.Character then attachOpponent(other.Character) end
+    end
+
+    for _, other in ipairs(Players:GetPlayers()) do
+        watchReactiveOpponent(other)
+    end
+    bindGlobal(Players.PlayerAdded, watchReactiveOpponent)
+    bindGlobal(Players.PlayerRemoving, removeReactiveOpponent)
+
+    local function threatNearby()
+        local now = os.clock()]==] },
+        { [==[            if not mayHold then
+                -- Do not interrupt a real manual F hold.
+                releaseF(false)]==], [==[            local reactivePulseActive = keyDown
+                and now < reactiveGuardUntil
+                and humanoid and humanoid.Health > 0
+                and not humanoid.PlatformStand and not humanoid.Sit
+                and not manualFDown and not manualGDown
+                and not UIS:IsKeyDown(Enum.KeyCode.G)
+                and not UIS:GetFocusedTextBox()
+                and Gui:GetAttribute("AntiGrabRecovering") ~= true
+            if not mayHold and not reactivePulseActive then
+                -- Do not interrupt a real manual F hold.
+                releaseF(false)]==] },
+        { [==[        syntheticPoseUntil, manualPoseUntil = -math.huge, -math.huge
+        disconnectCharacter()
+    end)
+    -- Startup: enabled by default]==], [==[        syntheticPoseUntil, manualPoseUntil = -math.huge, -math.huge
+        for other in pairs(reactiveOpponentRecords) do
+            removeReactiveOpponent(other)
+        end
+        disconnectCharacter()
+    end)
+    -- Startup: enabled by default]==] },
+    }
+    for _, edit in ipairs(_edits) do
+        local i, j = string.find(_block, edit[1], 1, true)
+        if not i or string.find(_block, edit[1], j + 1, true) then
+            error("[VOID HUB Auto Block V3] incompatible patch")
+        end
+        _block = string.sub(_block, 1, i - 1)
+            .. edit[2] .. string.sub(_block, j + 1)
+    end
+    _body = string.sub(_body, 1, _from - 1)
+        .. _block .. string.sub(_body, _to)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
