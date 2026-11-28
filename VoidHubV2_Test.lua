@@ -4620,6 +4620,97 @@ do
         .. _ct .. string.sub(_body, _b)
 end
 
+
+-- COUNTER TP V14: REARM EVERY SEQUENTIAL HIT WITHOUT 30 SECOND LOCKOUT
+-- Counter TP only: new damage events always queue, even during a brief
+-- caller-safety backoff. Do not inherit the GLOBAL 30-second classroom
+-- pause or throw away unrelated queued hits after 2 self-only results.
+-- Keep one targeted carry/teleport/stop per impact, fixed 9 studs,
+-- whitelist, No Slow and Forcefield/AntiGrab shared remote ownership.
+do
+    local _start = [==[-- DEFENSE: COUNTER TP (TARGETED CARRY/EVENT, NO BUBBLE)]==]
+    local _stop = [==[-- VOID HUB V1 / UNIFIED COMMAND CENTER LAYOUT]==]
+    local _from = string.find(_body, _start, 1, true)
+    local _to = _from and string.find(_body, _stop, _from + #_start, true)
+    if not _from or not _to then error("[VOID HUB Counter TP V14] module missing") end
+    local _ct = string.sub(_body, _from, _to - 1)
+    local _changes = {
+        { [==[    local counterSafetyUntil = -math.huge
+    local consecutiveSelfOnly = 0
+    local function counterSafetyPaused()
+        return os.clock() < counterSafetyUntil
+            or os.clock() < (tonumber(Gui:GetAttribute(
+                "ClassroomLoopSafetyUntil")) or 0)
+    end]==], [==[    local counterSafetyUntil = -math.huge
+    local consecutiveSelfOnly = 0
+    -- The shared classroom circuit breaker protects other modules for
+    -- 30s. Counter TP previously inherited that entire duration after just
+    -- two self-classroom arrivals, appearing completely dead after 4 hits.
+    -- Respect every NEW shared safety incident briefly, without suppressing
+    -- fresh hit detection or locking this ON toggle for 30 seconds.
+    local lastSharedSafetyDeadline = -math.huge
+    local briefSharedSafetyUntil = -math.huge
+    local function counterSafetyPaused()
+        local now = os.clock()
+        local sharedDeadline = tonumber(Gui:GetAttribute(
+            "ClassroomLoopSafetyUntil")) or 0
+        if sharedDeadline > now
+            and sharedDeadline > lastSharedSafetyDeadline + 0.01 then
+            lastSharedSafetyDeadline = sharedDeadline
+            briefSharedSafetyUntil = math.max(
+                briefSharedSafetyUntil, now + 0.55)
+        end
+        return now < counterSafetyUntil
+            or now < briefSharedSafetyUntil
+    end]==] },
+        { [==[            if not alive or not enabled or counterSafetyPaused()
+                or revision ~= generation or hum.Health <= 0 then return end]==], [==[            -- Real subsequent hits must always be DETECTED and queued,
+            -- even during brief self-teleport safety; only the outgoing
+            -- server handshake waits for safety to clear.
+            if not alive or not enabled
+                or revision ~= generation or hum.Health <= 0 then return end]==] },
+        { [==[                    local queueTTL = item.multiHit and 5.2 or 2.4
+                    local timeoutAt = math.min(item.at + queueTTL,
+                        os.clock() + queueTTL)]==], [==[                    -- A series of different attackers can queue behind a
+                    -- valid serial handoff and 0.55s safety backoff. Give
+                    -- each confirmed hit a bounded but usable time to send.
+                    -- Never queue indefinitely or replay stale attackers.
+                    local queueTTL = item.multiHit and 7.0 or 5.0
+                    local timeoutAt = item.at + queueTTL]==] },
+        { [==[                        counterSafetyUntil = math.max(counterSafetyUntil,
+                            os.clock() + 1.0)
+                        consecutiveSelfOnly = 0
+                        table.clear(hitQueue)
+                        Gui:SetAttribute("CounterTPHitPending", false)
+                        render("SAFETY PAUSE: server moved your avatar, "
+                            .. "not the target. Re-arms automatically in 1s.")]==], [==[                        counterSafetyUntil = math.max(counterSafetyUntil,
+                            os.clock() + 0.55)
+                        consecutiveSelfOnly = 0
+                        -- No global queue clear! These are OTHER players'
+                        -- individually confirmed hits waiting for handoff.
+                        -- Preserve them; the worker safely resumes after
+                        -- this short local backoff.
+                        render("SAFETY BACKOFF: server moved your avatar, "
+                            .. "not the target. Queue preserved; re-arms in 0.55s.")]==] },
+        { [==[        counterSafetyUntil = -math.huge
+        consecutiveSelfOnly = 0 -- toggle can also re-arm immediately]==], [==[        counterSafetyUntil = -math.huge
+        consecutiveSelfOnly = 0
+        lastSharedSafetyDeadline = -math.huge
+        briefSharedSafetyUntil = -math.huge -- toggle re-arms immediately]==] }
+    }
+    for _, edit in ipairs(_changes) do
+        local a, b = string.find(_ct, edit[1], 1, true)
+        if not a or string.find(_ct, edit[1], b + 1, true) then
+            error("[VOID HUB Counter TP V14] mismatched patch: "
+                .. string.sub(edit[1], 1, 80))
+        end
+        _ct = string.sub(_ct, 1, a - 1)
+            .. edit[2] .. string.sub(_ct, b + 1)
+    end
+    _body = string.sub(_body, 1, _from - 1)
+        .. _ct .. string.sub(_body, _to)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
