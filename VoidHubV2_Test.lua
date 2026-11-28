@@ -5872,6 +5872,148 @@ do
         }, "Forcefield")
 end
 
+
+-- TP WALK V5: PLANE VELOCITY SPEED SCALE
+-- TP WALK ONLY. Replace the pre-physics velocity assignment (which can be
+-- overwritten by Roblox Humanoid motion) with a horizontal LinearVelocity.
+-- No per-frame CFrame relocation, no Y-axis force, and no speed-by-FPS
+-- 12-stud step cap. 120..500 input changes the actual target velocity.
+-- Server authority may still limit the attainable in-game speed.
+do
+    local _start = [==[-- TP WALK V118 - ground + air boost, including manual G carries.]==]
+    local _stop = [==[-- MOVEMENT: NO SLOW (V68)]==]
+    local _a = string.find(_body, _start, 1, true)
+    local _b = _a and string.find(_body, _stop, _a + #_start, true)
+    if not _a or not _b then error("[VOID HUB TP Walk V5] module missing") end
+    local _walk = string.sub(_body, _a, _b - 1)
+    local edits = {
+        { [==[    local lastVelocityBoostAt = -math.huge]==],
+          [==[    local lastVelocityBoostAt = -math.huge
+    local planarDrive, driveAttachment, driveRoot = nil, nil, nil
+    local driveTargetSpeed = 0
+    local function clearPlanarDrive()
+        if planarDrive then
+            pcall(function() planarDrive:Destroy() end)
+            planarDrive = nil
+        end
+        if driveAttachment then
+            pcall(function() driveAttachment:Destroy() end)
+            driveAttachment = nil
+        end
+        driveRoot, driveTargetSpeed = nil, 0
+    end
+    local function ensurePlanarDrive(root)
+        if planarDrive and driveRoot == root and planarDrive.Parent == root then
+            return planarDrive
+        end
+        clearPlanarDrive()
+        local attachment = Instance.new("Attachment")
+        attachment.Name = "VoidHub_TPWalk_PlaneAttachment"
+        attachment.Parent = root
+        local drive = Instance.new("LinearVelocity")
+        drive.Name = "VoidHub_TPWalk_PlaneVelocity"
+        drive.Attachment0 = attachment
+        drive.VelocityConstraintMode = Enum.VelocityConstraintMode.Plane
+        drive.RelativeTo = Enum.ActuatorRelativeTo.World
+        drive.PrimaryTangentAxis = Vector3.new(1, 0, 0)
+        drive.SecondaryTangentAxis = Vector3.new(0, 0, 1)
+        drive.ForceLimitsEnabled = true
+        drive.ForceLimitMode = Enum.ForceLimitMode.Magnitude
+        drive.MaxForce = math.clamp(root.AssemblyMass * 9500, 70000, 650000)
+        drive.PlaneVelocity = Vector2.zero
+        drive.Parent = root
+        planarDrive, driveAttachment, driveRoot = drive, attachment, root
+        return drive
+    end]==] },
+        { [==[        if not enabled then
+            clearGhost()
+            clearWallPass()
+        end]==],
+          [==[        if not enabled then
+            clearPlanarDrive()
+            clearGhost()
+            clearWallPass()
+        end]==] },
+        { [==[        if character ~= lastBoostCharacter then
+            clearGhost()
+            clearWallPass()]==],
+          [==[        if character ~= lastBoostCharacter then
+            clearPlanarDrive()
+            clearGhost()
+            clearWallPass()]==] },
+        { [==[        if not humanoid or not root or humanoid.Health <= 0 then return end]==],
+          [==[        if not humanoid or not root or humanoid.Health <= 0 then
+            clearPlanarDrive()
+            return
+        end]==] },
+        { [==[            lastBoostPosition, lastBoostDirection = nil, nil
+            return
+        end
+        local now = os.clock()
+        refreshGhost(character, root, now)]==],
+          [==[            clearPlanarDrive()
+            lastBoostPosition, lastBoostDirection = nil, nil
+            return
+        end
+        local now = os.clock()
+        refreshGhost(character, root, now)]==] },
+        { [==[        if horizontal.Magnitude < 0.05 then
+            -- Release just the extra boost smoothly on key-up; never]==],
+          [==[        if horizontal.Magnitude < 0.05 then
+            clearPlanarDrive()
+            -- Release just the extra boost smoothly on key-up; never]==] },
+        { [==[        -- Physics-driven boost: no per-frame positional teleports.
+        -- Repeated CFrame relocation was racing the server/Humanoid,
+        -- causing the walk-stop-walk rubber-banding in open areas.
+        -- PreSimulation velocity preserves real gravity and floor contact.
+        local v = root.AssemblyLinearVelocity
+        local currentFlat = Vector3.new(v.X, 0, v.Z)
+        local desiredFlat = step.Unit * (step.Magnitude / math.max(delta, 0.001))
+        local response = math.clamp(delta * 22, 0, 1)
+        local newFlat = currentFlat:Lerp(desiredFlat, response)
+        if newFlat.Magnitude > BOOST_SPEED_CAP then
+            newFlat = newFlat.Unit * BOOST_SPEED_CAP
+        end
+        root.AssemblyLinearVelocity = Vector3.new(
+            newFlat.X, v.Y, newFlat.Z)
+        lastVelocityBoostAt = now
+        lastBoostPosition, lastBoostDirection = root.Position, unitDirection]==],
+          [==[        -- PlaneVelocity applies only X/Z force, so Humanoid still
+        -- has full normal gravity/jump control. Unlike setting root.CFrame
+        -- or writing velocity once before physics, the constraint keeps the
+        -- selected horizontal speed across Humanoid simulation steps.
+        -- The 12-stud step remains a wall-probe bound only, NOT a speed cap.
+        local drive = ensurePlanarDrive(root)
+        local response = math.clamp(delta * 15, 0, 1)
+        driveTargetSpeed += (boostSpeed - driveTargetSpeed) * response
+        drive.PlaneVelocity = Vector2.new(
+            unitDirection.X * driveTargetSpeed,
+            unitDirection.Z * driveTargetSpeed)
+        lastVelocityBoostAt = now
+        lastBoostPosition, lastBoostDirection = root.Position, unitDirection]==] },
+        { [==[        clearGhost()
+        clearWallPass()
+        table.clear(shownPrompts)]==],
+          [==[        clearPlanarDrive()
+        clearGhost()
+        clearWallPass()
+        table.clear(shownPrompts)]==] },
+        { [==[            .. "WalkSpeed unchanged; local wall pass and smooth pre-physics movement."]==],
+          [==[            .. "WalkSpeed unchanged; wall pass and physics-driven plane boost."]==] }
+    }
+    for _, edit in ipairs(edits) do
+        local i, j = string.find(_walk, edit[1], 1, true)
+        if not i or string.find(_walk, edit[1], j + 1, true) then
+            error("[VOID HUB TP Walk V5] incompatible: "
+                .. string.sub(edit[1], 1, 100))
+        end
+        _walk = string.sub(_walk, 1, i - 1)
+            .. edit[2] .. string.sub(_walk, j + 1)
+    end
+    _body = string.sub(_body, 1, _a - 1)
+        .. _walk .. string.sub(_body, _b)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
