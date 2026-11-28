@@ -5456,6 +5456,73 @@ do
     _body = string.sub(_body, 1, _a - 1) .. _ct .. string.sub(_body, _b)
 end
 
+
+-- FORCEFIELD / ANTI GRAB / COUNTER TP V17: PRIORITY HANDOFF
+-- Only Forcefield's shared-carry arbitration and anti-grab outgoing-echo
+-- markers change. Genuine AntiGrab and CounterTP queues take priority;
+-- never interleave their remotes with an active Forcefield handoff.
+do
+    local _start = [==[-- V2 FORCEFIELD V119: radius-based sequential push intervals, safe self-return.]==]
+    local _stop = [==[-- V2 only: Counter TP uses the working Anti-Grab targeted classroom]==]
+    local _a = string.find(_body, _start, 1, true)
+    local _b = _a and string.find(_body, _stop, _a + #_start, true)
+    if not _a or not _b then error("[VOID HUB V17] Forcefield not found") end
+    local _ff = string.sub(_body, _a, _b - 1)
+    local edits = {
+        -- AntiGrab's counter worker already sets AntiGrabClassroomPending
+        -- BEFORE waiting for ownership. Do not reacquire it ahead of them.
+        { [==[                and Gui:GetAttribute("CounterTPHitPending") ~= true
+                and now - lastRequestAt >= pushInterval()]==],
+          [==[                and Gui:GetAttribute("CounterTPHitPending") ~= true
+                and Gui:GetAttribute("AntiGrabClassroomPending") ~= true
+                and now - lastRequestAt >= pushInterval()]==] },
+        -- A new hit/grab can arrive DURING an outgoing Forcefield carry.
+        -- Skip its event, then let existing StopCarry release the channel.
+        { [==[                    and Gui:GetAttribute("AntiGrabRecovering") ~= true then
+                    warn("[VOID HUB TP TRACE] SOURCE=Forcefield]==],
+          [==[                    and Gui:GetAttribute("AntiGrabRecovering") ~= true
+                    and Gui:GetAttribute("AntiGrabClassroomPending") ~= true
+                    and Gui:GetAttribute("CounterTPHitPending") ~= true then
+                    warn("[VOID HUB TP TRACE] SOURCE=Forcefield]==] },
+        -- Check priority once more before firing a Forcefield CarryRequest,
+        -- covering a pending grab/hit queued just after the heartbeat chose FF.
+        { [==[            local carried, sent = false, false
+            local now = os.clock()
+            -- Anti-Grab can distinguish]==],
+          [==[            local carried, sent = false, false
+            local now = os.clock()
+            if Gui:GetAttribute("AntiGrabClassroomPending") == true
+                or Gui:GetAttribute("CounterTPHitPending") == true then
+                if entryState and entryState.inside then
+                    entryState.servedForEntry = false
+                end
+                finish()
+                return
+            end
+            -- Anti-Grab can distinguish]==] },
+        -- Long (1.15s) FF echo markers remained active across later genuine
+        -- grabs, particularly during rapid repeated Forcefield contacts.
+        -- Keep a short target-specific echo grace after the serial handoff.
+        { [==[            Gui:SetAttribute(markerName, now + 1.15)]==],
+          [==[            Gui:SetAttribute(markerName, now + 0.30)]==] },
+        { [==[                now + 1.15))]==],
+          [==[                now + 0.30))]==] },
+        { [==[                local endAt = os.clock() + 0.70 -- late StopCarry echo grace]==],
+          [==[                local endAt = os.clock() + 0.30 -- short target-specific StopCarry echo grace]==] }
+    }
+    for _, pair in ipairs(edits) do
+        local i, j = string.find(_ff, pair[1], 1, true)
+        if not i or string.find(_ff, pair[1], j + 1, true) then
+            error("[VOID HUB V17] Forcefield marker mismatch: "
+                .. string.sub(pair[1], 1, 75))
+        end
+        _ff = string.sub(_ff, 1, i - 1) .. pair[2]
+            .. string.sub(_ff, j + 1)
+    end
+    _body = string.sub(_body, 1, _a - 1)
+        .. _ff .. string.sub(_body, _b)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
