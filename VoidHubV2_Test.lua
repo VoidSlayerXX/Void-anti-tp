@@ -3740,6 +3740,107 @@ do
     _body = string.sub(_body, 1, _a - 1) .. _ff .. string.sub(_body, _b)
 end
 
+
+-- AUTO BLOCK V5: FIRST CLICK PUNCH PRIORITY
+-- V2 Auto Block only. Real first left-click is never sunk or replayed.
+-- Release auto-F at high input priority before game punch handling, and
+-- suppress reactive F while punching. Preserve F/G manual behavior,
+-- standing guard, whitelist and all unrelated combat/teleport features.
+do
+    local _start = [==[-- DEFENSE: AUTO BLOCK V187 - HELD REAL F BLOCK (NO FAKE HP)]==]
+    local _end = [==[-- Duplicate Defense Autodecline panel removed in V56.]==]
+    local _a = string.find(_body, _start, 1, true)
+    local _b = _a and string.find(_body, _end, _a + #_start, true)
+    if not _a or not _b then
+        error("[VOID HUB Auto Block V5] section missing")
+    end
+    local _ab = string.sub(_body, _a, _b - 1)
+    local _edits = {
+        { [==[        if not alive or not enabled or not tapActive
+            or other.Character ~= character
+            or not isPunching()
+            or manualFDown or manualGDown]==], [==[        if not alive or not enabled or not tapActive
+            or other.Character ~= character
+            -- Never inject a reactive F press DURING a real punch.
+            -- The combat controller may ignore attack clicks while F is
+            -- held; attack input has absolute priority over Auto Block.
+            or isPunching()
+            or manualFDown or manualGDown]==] },
+        { [==[    -- Regular punches, F and G take priority over synthetic F key events.
+    -- Never consume the user's input or require a nearby opponent.
+    bindGlobal(UIS.InputBegan, function(input)]==], [==[    -- Execute BEFORE ordinary game input handling when the platform
+    -- supports ContextActionService. PASS preserves the real mouse click;
+    -- this never replays the click or causes a second punch.
+    local punchPriorityAction = "VoidHubV2_AutoBlock_PunchPriority"
+    local punchCAS = game:GetService("ContextActionService")
+    local punchPriorityBound = false
+    local function preparePunchInput()
+        if not alive or not enabled then return end
+        lastPunchInput = os.clock()
+        pauseAutoFor(PUNCH_GRACE_SECONDS)
+        -- Cancel reactive F pulse callbacks before they can re-arm while
+        -- the player is pressing attack. Manual F remains untouched.
+        reactiveGuardUntil = -math.huge
+        reactivePulseSerial += 1
+        if not manualFDown then releaseF(true) end
+        restoreBlockPose()
+    end
+    local didBind, bindError = pcall(function()
+        punchCAS:BindActionAtPriority(
+            punchPriorityAction,
+            function(_, inputState)
+                if inputState == Enum.UserInputState.Begin then
+                    preparePunchInput()
+                end
+                return Enum.ContextActionResult.Pass
+            end,
+            false,
+            Enum.ContextActionPriority.High.Value + 1000,
+            Enum.UserInputType.MouseButton1
+        )
+    end)
+    punchPriorityBound = didBind
+    if not didBind then
+        warn("[VOID HUB AUTO BLOCK V5] Punch priority hook unavailable: "
+            .. tostring(bindError))
+    end
+    -- InputBegan remains a fallback for executors that do not send
+    -- physical mouse input through ContextActionService.
+    -- Never consume the user's input or require a nearby opponent.
+    bindGlobal(UIS.InputBegan, function(input)]==] },
+        { [==[        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            lastPunchInput = os.clock()
+            pauseAutoFor(PUNCH_GRACE_SECONDS)
+            releaseF()
+            restoreBlockPose()]==], [==[        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            preparePunchInput()]==] },
+        { [==[    Gui.Destroying:Connect(function()
+        alive, enabled = false, false
+        generation += 1
+        tapRevision += 1]==], [==[    Gui.Destroying:Connect(function()
+        if punchPriorityBound then
+            punchPriorityBound = false
+            pcall(function()
+                punchCAS:UnbindAction(punchPriorityAction)
+            end)
+        end
+        alive, enabled = false, false
+        generation += 1
+        tapRevision += 1]==] }
+    }
+    for _, change in ipairs(_edits) do
+        local i, j = string.find(_ab, change[1], 1, true)
+        if not i or string.find(_ab, change[1], j + 1, true) then
+            error("[VOID HUB Auto Block V5] incompatible patch: "
+                .. string.sub(change[1], 1, 75))
+        end
+        _ab = string.sub(_ab, 1, i - 1)
+            .. change[2] .. string.sub(_ab, j + 1)
+    end
+    _body = string.sub(_body, 1, _a - 1)
+        .. _ab .. string.sub(_body, _b)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
