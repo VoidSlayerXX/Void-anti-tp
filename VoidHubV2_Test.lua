@@ -4242,6 +4242,115 @@ do
     }, "AutoDeclineRequests")
 end
 
+
+-- COUNTER TP V12: NO SLOW COMPATIBILITY + PRESERVE WALK MOMENTUM
+-- Only Counter TP: preserve normal horizontal velocity if server wrongly
+-- moves SELF to classroom. Restore No Slow baseline after StopCarry release
+-- when No Slow is ON, respecting user Walk Speed override and all other
+-- active teleport/recovery owners. No other module is modified.
+do
+    local _begin = [==[-- DEFENSE: COUNTER TP (TARGETED CARRY/EVENT, NO BUBBLE)]==]
+    local _end = [==[-- VOID HUB V1 / UNIFIED COMMAND CENTER LAYOUT]==]
+    local _a = string.find(_body, _begin, 1, true)
+    local _b = _a and string.find(_body, _end, _a + #_begin, true)
+    if not _a or not _b then error("[VOID HUB Counter TP V12] section missing") end
+    local _ct = string.sub(_body, _a, _b - 1)
+    local _changes = {
+        { [==[                    pcall(function()
+                        root.CFrame = CFrame.new(originalCFrame.Position)
+                            * root.CFrame.Rotation
+                        root.AssemblyLinearVelocity = Vector3.zero
+                        root.AssemblyAngularVelocity = Vector3.zero
+                    end)]==], [==[                    -- Restore only an actual wrong-room snap. Zeroing
+                    -- velocity here was killing real walking/sprint momentum
+                    -- even with No Slow enabled. Preserve ordinary speed,
+                    -- suppress only implausible physics fling velocity.
+                    pcall(function()
+                        local preservedVelocity = root.AssemblyLinearVelocity
+                        local flat = Vector3.new(preservedVelocity.X, 0,
+                            preservedVelocity.Z)
+                        if flat.Magnitude > 300 then
+                            flat = flat.Unit * 90
+                        end
+                        root.CFrame = CFrame.new(originalCFrame.Position)
+                            * root.CFrame.Rotation
+                        root.AssemblyLinearVelocity = Vector3.new(
+                            flat.X, math.clamp(preservedVelocity.Y, -85, 85),
+                            flat.Z)
+                    end)]==] },
+        { [==[        finish()
+
+        if ok and didEvent then
+            task.delay(0.65, function()]==], [==[        finish()
+
+        -- No Slow V68 does not restore WalkSpeed while PlatformStand is
+        -- true. Our outgoing Carry may toggle PlatformStand and apply a
+        -- temporary server combat slow even after StopCarry. Restore only
+        -- if No Slow is ON, once the carry has safely released; never set
+        -- WalkSpeed on normal/legitimate movement when No Slow is OFF.
+        local movementPage = pages["Movement"]
+        local noSlowCard = movementPage
+            and movementPage:FindFirstChild("MovementNoSlow")
+        local noSlowToggle = noSlowCard
+            and noSlowCard:FindFirstChild("NoSlowToggle")
+        if noSlowToggle and noSlowToggle.Text == "No Slow: ON" then
+            local noSlowStatus = noSlowCard:FindFirstChild("NoSlowStatus")
+            local baseline = tonumber(noSlowStatus and noSlowStatus.Text
+                and noSlowStatus.Text:match("Normal speed:%s*([%d%.]+)"))
+                or 16
+            -- If the user deliberately set a higher Walk Speed, use that
+            -- baseline instead of resetting them to 16.
+            local walkCard = movementPage
+                and movementPage:FindFirstChild("MovementWalkSpeed")
+            local walkToggle = walkCard
+                and walkCard:FindFirstChild("WalkSpeedToggle")
+            local walkInput = walkCard
+                and walkCard:FindFirstChild("WalkSpeedInput")
+            if walkToggle and walkToggle.Text == "WALK: ON" then
+                baseline = math.max(baseline,
+                    tonumber(walkInput and walkInput.Text) or baseline)
+            end
+            baseline = math.clamp(baseline, 1, 200)
+            local function restoreNoSlowAfterCounter()
+                if not alive or not enabled or revision ~= generation
+                    or Player.Character ~= ownChar or not hum.Parent
+                    or hum.Health <= 0 or hum.PlatformStand or hum.Sit
+                    or root.Anchored or DeathTPIsEscaping
+                    or isManualGrabWindow()
+                    or SharedTeleportOwner ~= nil
+                    or Gui:GetAttribute("AntiGrabRecovering") == true
+                    or Gui:GetAttribute("AntiGrabClassroomPending") == true
+                    or Gui:GetAttribute("AntiRagdollRecoveryActive") == true
+                    or noSlowToggle.Text ~= "No Slow: ON" then return end
+                if hum.WalkSpeed < baseline - 0.01 then
+                    hum.WalkSpeed = baseline
+                    f9HitTracker("V12_NO_SLOW_RESTORED", nil,
+                        "speed=" .. tostring(baseline))
+                end
+            end
+            -- Short bounded post-carry checks also cover late replicated
+            -- server slow effects. No loops, remote spam, or forced states.
+            for _, t in ipairs({0, 0.05, 0.13, 0.27, 0.48, 0.80, 1.25}) do
+                task.delay(t, restoreNoSlowAfterCounter)
+            end
+        end
+
+        if ok and didEvent then
+            task.delay(0.65, function()]==] }
+    }
+    for _, pair in ipairs(_changes) do
+        local i, j = string.find(_ct, pair[1], 1, true)
+        if not i or string.find(_ct, pair[1], j + 1, true) then
+            error("[VOID HUB Counter TP V12] incompatible patch: "
+                .. string.sub(pair[1], 1, 80))
+        end
+        _ct = string.sub(_ct, 1, i - 1) .. pair[2]
+            .. string.sub(_ct, j + 1)
+    end
+    _body = string.sub(_body, 1, _a - 1)
+        .. _ct .. string.sub(_body, _b)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
