@@ -4711,6 +4711,42 @@ do
         .. _ct .. string.sub(_body, _to)
 end
 
+
+-- FORCEFIELD V10: QUICKER SERIAL CARRY AND FAIR PUSH REARM
+-- V2 Forcefield only: shorten serial Carry -> Event -> StopCarry settle,
+-- next-player launch interval, and per-player rearm while still inside.
+-- Keep 40-stud bubble, safe self-return, 5/12 crowd waves, shared owner,
+-- Counter TP hit priority and V4 watchdog. Never parallelize remotes.
+do
+    local _start = [==[-- V2 FORCEFIELD V119: radius-based sequential push intervals, safe self-return.]==]
+    local _stop = [==[-- V2 only: Counter TP uses the working Anti-Grab targeted classroom]==]
+    local _from = string.find(_body, _start, 1, true)
+    local _to = _from and string.find(_body, _stop, _from + #_start, true)
+    if not _from or not _to then
+        error("[VOID HUB Forcefield V10] module boundary missing")
+    end
+    local _ff = string.sub(_body, _from, _to - 1)
+    local _edits = {
+        { [==[        local CONTINUOUS_CONTACT_REARM_SECONDS = 0.55 -- repeat while still inside]==], [==[        local CONTINUOUS_CONTACT_REARM_SECONDS = 0.40 -- quicker repeated contact, still per-player bounded]==] },
+        { [==[            return 0.055 -- responsive, serial push requests]==], [==[            return 0.038 -- quicker next-player start; remotes stay strictly serial]==] },
+        { [==[        local RELEASE_SETTLE_SECONDS = 0.030 -- preserve StopCarry settling]==], [==[        local RELEASE_SETTLE_SECONDS = 0.020 -- bounded StopCarry settle; no overlapping owners]==] },
+        { [==[                task.wait(0.060) -- faster but still allow Carry to register]==], [==[                task.wait(0.050) -- faster Carry registration; keep one in-flight target]==] },
+        { [==[                    task.wait(0.035) -- settle event before StopCarry]==], [==[                    task.wait(0.030) -- faster event settle, still before StopCarry]==] },
+        { [==[                render(("ON. Multi-player queue; %d seconds per player; self-return protected.")]==], [==[                render(("ON. Multi-player queue; %.2f seconds minimum between starts; self-return protected.")]==] }
+    }
+    for _, edit in ipairs(_edits) do
+        local i, j = string.find(_ff, edit[1], 1, true)
+        if not i or string.find(_ff, edit[1], j + 1, true) then
+            error("[VOID HUB Forcefield V10] incompatible patch: "
+                .. string.sub(edit[1], 1, 75))
+        end
+        _ff = string.sub(_ff, 1, i - 1)
+            .. edit[2] .. string.sub(_ff, j + 1)
+    end
+    _body = string.sub(_body, 1, _from - 1)
+        .. _ff .. string.sub(_body, _to)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
