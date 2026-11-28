@@ -4773,6 +4773,501 @@ do
         .. _ff .. string.sub(_body, _to)
 end
 
+
+-- COUNTER TP V15: RAPID INDIVIDUAL HITS AND CROWD TRACKING
+-- Every real HP loss has its own independently retried impact timestamp,
+-- attacker and per-impact dedup. Never teleport 4 unrelated bystanders
+-- for one damage event. Respect validated target tags/animation evidence;
+-- report ambiguity rather than choosing an arbitrary nearby player.
+-- Only the V2 Counter TP module changes.
+do
+    local _start = [==[-- DEFENSE: COUNTER TP (TARGETED CARRY/EVENT, NO BUBBLE)]==]
+    local _stop = [==[-- VOID HUB V1 / UNIFIED COMMAND CENTER LAYOUT]==]
+    local _a = string.find(_body, _start, 1, true)
+    local _b = _a and string.find(_body, _stop, _a + #_start, true)
+    if not _a or not _b then error("[VOID HUB Counter TP V15] module missing") end
+    local _ct = string.sub(_body, _a, _b - 1)
+    local _edits = {
+        { [==[        local unresolvedHitId = 0
+        hit = function(signal, damage, retryId, explicitAttacker)]==], [==[        local unresolvedHitId = 0
+        local impactContexts = {}
+        hit = function(signal, damage, retryId, explicitAttacker)]==] },
+        { [==[            local retry = retryId ~= nil
+            if retry and retryId ~= unresolvedHitId then return end
+            local actualDamage = (damage or 0) > 0.01]==], [==[            local retry = retryId ~= nil
+            local impactContext = retry and impactContexts[retryId] or nil
+            if retry and (not impactContext or now - impactContext.at > 0.85) then
+                return
+            end
+            local actualDamage = (damage or 0) > 0.01]==] },
+        { [==[            if actualDamage and not retry then
+                unresolvedHitId += 1
+                table.clear(queuedThisImpact)
+                local impactId = unresolvedHitId
+                -- Four players' animations can replicate over several frames.
+                -- Recheck even if the first attacker has been identified.
+                for _, delaySeconds in ipairs({0.03, 0.09, 0.17, 0.29, 0.46}) do
+                    task.delay(delaySeconds, function()
+                        if alive and enabled and revision == generation
+                            and Player.Character == character
+                            and unresolvedHitId == impactId then
+                            hit(signal, 0, impactId)
+                        end
+                    end)
+                end
+            end
+]==], [==[            if actualDamage and not retry then
+                unresolvedHitId += 1
+                local impactId = unresolvedHitId
+                impactContext = {at = now, queued = {}}
+                impactContexts[impactId] = impactContext
+                for id, previousContext in pairs(impactContexts) do
+                    if id < impactId - 16 or now - previousContext.at > 1.60 then
+                        impactContexts[id] = nil
+                    end
+                end
+                for _, delaySeconds in ipairs({0.03, 0.09, 0.17, 0.29, 0.46}) do
+                    task.delay(delaySeconds, function()
+                        if alive and enabled and revision == generation
+                            and Player.Character == character
+                            and impactContexts[impactId] == impactContext then
+                            hit(signal, 0, impactId)
+                        end
+                    end)
+                end
+            end
+]==] },
+        { [==[            local target, reason
+            if explicitAttacker and nearby(explicitAttacker, root) then
+                target, reason = explicitAttacker, "nearby punch animation"
+            else
+                target, reason = findAttacker(hum, root)
+            end]==], [==[            local impactTime = impactContext and impactContext.at or now
+            local target, reason
+            if explicitAttacker and nearby(explicitAttacker, root) then
+                target, reason = explicitAttacker, "nearby punch animation"
+            else
+                target, reason = findAttacker(hum, root, impactTime)
+            end]==] },
+        { [==[    local function findAttacker(humanoid, root)
+        local now = os.clock()
+        local function close(other)
+            if not other or other == Player or other.Parent ~= Players then return false end
+            return nearby(other, root)
+                or (nearTimes[other.UserId]
+                    and now - nearTimes[other.UserId] <= 1.25)
+        end
+        -- V5: link actual HP loss to a nearby player's known fist animation.
+        -- Count DISTINCT matching players. More than one means ambiguous.
+        -- Retry calls use lastDamageAt as the original impact timestamp.
+        local impactAt = lastDamageAt > -math.huge
+            and now - lastDamageAt <= 1.2 and lastDamageAt or now
+        local v5Match, v5Count = nil, 0
+        for _, candidate in ipairs(Players:GetPlayers()) do
+            if close(candidate) then
+                local history = recentV5Fists[candidate]
+                if history then
+                    for _, entry in ipairs(history) do
+                        if entry.character == candidate.Character
+                            and entry.at >= impactAt - V5_WINDOW_BEFORE
+                            and entry.at <= impactAt + V5_WINDOW_AFTER then
+                            v5Match, v5Count = candidate, v5Count + 1
+                            break
+                        end
+                    end
+                end
+            end
+        end
+        if v5Count == 1 then
+            f9HitTracker("V5_MATCHED", v5Match,
+                "fist animation + HP loss; attacker is probable, not confirmed")
+            return v5Match, "V5 fist animation + damage correlation"
+        elseif v5Count > 1 then
+            f9HitTracker("V5_AMBIGUOUS", nil,
+                tostring(v5Count) .. " players matched same damage")
+            return nil, "multiple possible V5 fist attackers"
+        end
+        -- Games may replicate the damaging player as 'creator',
+        -- 'Attacker' or 'LastDamager' on Humanoid or Character.
+        -- Trust only a nearby/recent target, never a stale distant tag.
+        local c = humanoid.Parent
+        for _, container in ipairs({humanoid, c}) do
+            if container then
+                for _, tagName in ipairs({
+                    "creator", "Creator", "attacker", "Attacker", "LastDamager"
+                }) do
+                    local tag = container:FindFirstChild(tagName)
+                    if tag then
+                        local who
+                        if tag:IsA("ObjectValue") then
+                            local value = tag.Value
+                            if value and value:IsA("Player") then
+                                who = value
+                            elseif value and value:IsA("Model") then
+                                who = Players:GetPlayerFromCharacter(value)
+                            end
+                        elseif tag:IsA("IntValue") or tag:IsA("NumberValue") then
+                            who = Players:GetPlayerByUserId(tag.Value)
+                        end
+                        if who and close(who) then
+                            return who, "attacker tag"
+                        end
+                    end
+                end
+            end
+        end
+        -- V7: additional styles can use different punch/ability animations.
+        -- Accept only a short-timing match to an ACTUAL HP drop, from
+        -- exactly ONE eligible nearby player. A visual animation by itself,
+        -- or a nearby lone player without a matching ID, never triggers.
+        local v7Player, v7Count, v7Style, v7ID = nil, 0, nil, nil
+        for _, candidate in ipairs(Players:GetPlayers()) do
+            if close(candidate)
+                and not inPlayerList(State.Whitelist, candidate) then
+                local history = recentUnknownAnimations[candidate]
+                if history then
+                    for _, event in ipairs(history) do
+                        local style = V7_STYLE_CANDIDATES[event.id]
+                        if style and event.character == candidate.Character
+                            and event.at >= impactAt - V7_DAMAGE_WINDOW_BEFORE
+                            and event.at <= impactAt + V7_DAMAGE_WINDOW_AFTER then
+                            v7Count += 1
+                            v7Player, v7Style, v7ID = candidate, style, event.id
+                            -- Count each eligible player just once.
+                            break
+                        end
+                    end
+                end
+            end
+        end
+        if v7Count == 1 then
+            f9HitTracker("V7_STYLE_MATCH", v7Player,
+                "observed=" .. tostring(v7Style)
+                .. " id=" .. tostring(v7ID)
+                .. " + HP loss; probable, NOT confirmed")
+            return v7Player, "V7 timing+damage: " .. v7Style
+        elseif v7Count > 1 then
+            f9HitTracker("V7_AMBIGUOUS", nil,
+                tostring(v7Count) .. " players had candidate animations near damage")
+            return nil, "multiple V7 animation candidates; no blind teleport"
+        end
+        -- Never target a player solely because they are the nearest or
+        -- the ONLY other player in the server.
+        return nil, "no V5/V7 attack animation matched HP loss and no damage tag"
+    end
+
+]==], [==[    local function findAttacker(humanoid, root, suppliedImpactAt)
+        local now = os.clock()
+        local function close(other)
+            if not other or other == Player or other.Parent ~= Players
+                or inPlayerList(State.Whitelist, other) then return false end
+            return nearby(other, root)
+                or (nearTimes[other.UserId]
+                    and now - nearTimes[other.UserId] <= 0.70)
+        end
+        -- V5: link actual HP loss to a nearby player's known fist animation.
+        -- Count DISTINCT matching players. More than one means ambiguous.
+        -- Retry calls use lastDamageAt as the original impact timestamp.
+        local impactAt = suppliedImpactAt or (lastDamageAt > -math.huge
+            and now - lastDamageAt <= 1.2 and lastDamageAt or now)
+        -- Games may replicate the damaging player as 'creator',
+        -- 'Attacker' or 'LastDamager' on Humanoid or Character.
+        -- Trust only a nearby/recent target, never a stale distant tag.
+        local c = humanoid.Parent
+        for _, container in ipairs({humanoid, c}) do
+            if container then
+                for _, tagName in ipairs({
+                    "creator", "Creator", "attacker", "Attacker", "LastDamager"
+                }) do
+                    local tag = container:FindFirstChild(tagName)
+                    if tag then
+                        local who
+                        if tag:IsA("ObjectValue") then
+                            local value = tag.Value
+                            if value and value:IsA("Player") then
+                                who = value
+                            elseif value and value:IsA("Model") then
+                                who = Players:GetPlayerFromCharacter(value)
+                            end
+                        elseif tag:IsA("IntValue") or tag:IsA("NumberValue") then
+                            who = Players:GetPlayerByUserId(tag.Value)
+                        end
+                        if who and close(who) then
+                            return who, "attacker tag"
+                        end
+                    end
+                end
+            end
+        end
+        local v5Match, v5Count = nil, 0
+        for _, candidate in ipairs(Players:GetPlayers()) do
+            if close(candidate) then
+                local history = recentV5Fists[candidate]
+                if history then
+                    for _, entry in ipairs(history) do
+                        if entry.character == candidate.Character
+                            and entry.at >= impactAt - V5_WINDOW_BEFORE
+                            and entry.at <= impactAt + V5_WINDOW_AFTER then
+                            v5Match, v5Count = candidate, v5Count + 1
+                            break
+                        end
+                    end
+                end
+            end
+        end
+        if v5Count == 1 then
+            f9HitTracker("V5_MATCHED", v5Match,
+                "fist animation + HP loss; attacker is probable, not confirmed")
+            return v5Match, "V5 fist animation + damage correlation"
+        elseif v5Count > 1 then
+            f9HitTracker("V5_AMBIGUOUS", nil,
+                tostring(v5Count) .. " players matched same damage")
+            -- Ambiguous V5 animations are not sufficient by themselves.
+            -- The per-impact matcher checks narrower evidence below.
+        end
+        -- V7: additional styles can use different punch/ability animations.
+        -- Accept only a short-timing match to an ACTUAL HP drop, from
+        -- exactly ONE eligible nearby player. A visual animation by itself,
+        -- or a nearby lone player without a matching ID, never triggers.
+        local v7Player, v7Count, v7Style, v7ID = nil, 0, nil, nil
+        for _, candidate in ipairs(Players:GetPlayers()) do
+            if close(candidate)
+                and not inPlayerList(State.Whitelist, candidate) then
+                local history = recentUnknownAnimations[candidate]
+                if history then
+                    for _, event in ipairs(history) do
+                        local style = V7_STYLE_CANDIDATES[event.id]
+                        if style and event.character == candidate.Character
+                            and event.at >= impactAt - V7_DAMAGE_WINDOW_BEFORE
+                            and event.at <= impactAt + V7_DAMAGE_WINDOW_AFTER then
+                            v7Count += 1
+                            v7Player, v7Style, v7ID = candidate, style, event.id
+                            -- Count each eligible player just once.
+                            break
+                        end
+                    end
+                end
+            end
+        end
+        if v7Count == 1 then
+            f9HitTracker("V7_STYLE_MATCH", v7Player,
+                "observed=" .. tostring(v7Style)
+                .. " id=" .. tostring(v7ID)
+                .. " + HP loss; probable, NOT confirmed")
+            return v7Player, "V7 timing+damage: " .. v7Style
+        elseif v7Count > 1 then
+            f9HitTracker("V7_AMBIGUOUS", nil,
+                tostring(v7Count) .. " players had candidate animations near damage")
+            return nil, "multiple V7 animation candidates; no blind teleport"
+        end
+        -- Never target a player solely because they are the nearest or
+        -- the ONLY other player in the server.
+        return nil, "no V5/V7 attack animation matched HP loss and no damage tag"
+    end
+
+]==] },
+        { [==[    local function collectConcurrentAttackers(root, impactAt)
+        local results = {}
+        for _, other in ipairs(Players:GetPlayers()) do
+            if other ~= Player and other.Parent == Players
+                and not inPlayerList(State.Whitelist, other) then
+                local character = other.Character
+                local otherRoot = character
+                    and character:FindFirstChild("HumanoidRootPart")
+                local otherHum = character
+                    and character:FindFirstChildOfClass("Humanoid")
+                local recent = nearTimes[other.UserId]
+                local wasNear = recent and impactAt - recent <= 0.40
+                if otherRoot and otherHum and otherHum.Health > 0
+                    and (wasNear or
+                        (otherRoot.Position - root.Position).Magnitude <= radius + 1) then
+                    local history = recentUnknownAnimations[other]
+                    local matchId = nil
+                    if history then
+                        for index = #history, 1, -1 do
+                            local event = history[index]
+                            -- Verified DEFAULT ID and observed V7 style IDs.
+                            -- A narrow window avoids treating distant idle
+                            -- animations as attacks during a chaotic fight.
+                            if event.character == character
+                                and (event.id == V5_FIST_ID
+                                    or V7_STYLE_CANDIDATES[event.id])
+                                and event.at >= impactAt - 0.22
+                                and event.at <= impactAt + 0.26 then
+                                matchId = event.id
+                                break
+                            end
+                        end
+                    end
+                    if matchId then
+                        results[#results + 1] = {
+                            player = other,
+                            character = character,
+                            animationId = matchId
+                        }
+                    end
+                end
+            end
+        end
+        -- Never select a candidate from proximity alone.
+        -- Multi-attacker queueing is capped at four known-style candidates.
+        return results
+    end
+
+]==], [==[    local function collectConcurrentAttackers(root, impactAt)
+        local results = {}
+        for _, other in ipairs(Players:GetPlayers()) do
+            if other ~= Player and other.Parent == Players
+                and not inPlayerList(State.Whitelist, other) then
+                local character = other.Character
+                local otherRoot = character
+                    and character:FindFirstChild("HumanoidRootPart")
+                local otherHum = character
+                    and character:FindFirstChildOfClass("Humanoid")
+                local recent = nearTimes[other.UserId]
+                local wasNear = recent and math.abs(impactAt - recent) <= 0.60
+                if otherRoot and otherHum and otherHum.Health > 0
+                    and (wasNear or
+                        (otherRoot.Position - root.Position).Magnitude <= radius + 1) then
+                    local history = recentUnknownAnimations[other]
+                    local matchId, nearestDelta = nil, math.huge
+                    if history then
+                        for index = #history, 1, -1 do
+                            local event = history[index]
+                            -- Verified DEFAULT ID and observed V7 style IDs.
+                            -- A narrow window avoids treating distant idle
+                            -- animations as attacks during a chaotic fight.
+                            if event.character == character
+                                and (event.id == V5_FIST_ID
+                                    or V7_STYLE_CANDIDATES[event.id])
+                                and event.at >= impactAt - 0.22
+                                and event.at <= impactAt + 0.26
+                                and math.abs(event.at - impactAt) < nearestDelta then
+                                matchId = event.id
+                                nearestDelta = math.abs(event.at - impactAt)
+                            end
+                        end
+                    end
+                    if matchId then
+                        results[#results + 1] = {
+                            player = other,
+                            character = character,
+                            animationId = matchId,
+                            timingDelta = nearestDelta
+                        }
+                    end
+                end
+            end
+        end
+        -- Never select a candidate from proximity alone.
+        -- Multi-attacker queueing is capped at four known-style candidates.
+        return results
+    end
+
+]==] },
+        { [==[                if not root or not nearby(other, root) then return end]==], [==[                local theirRoot = c and c:FindFirstChild("HumanoidRootPart")
+                if not root or not theirRoot
+                    or inPlayerList(State.Whitelist, other)
+                    or (theirRoot.Position - root.Position).Magnitude
+                        > radius + 4 then return end]==] },
+        { [==[                if nearby(other, root) then
+                    nearTimes[other.UserId] = now
+                    observeAttacker(other)
+                end]==], [==[                if nearby(other, root) then
+                    nearTimes[other.UserId] = now
+                    observeAttacker(other)
+                elseif other ~= Player
+                    and not inPlayerList(State.Whitelist, other) then
+                    local c = other.Character
+                    local otherRoot = c and c:FindFirstChild("HumanoidRootPart")
+                    if otherRoot and (otherRoot.Position - root.Position).Magnitude
+                        <= radius + 4 then
+                        observeAttacker(other)
+                    end
+                end]==] },
+        { [==[            local simultaneousTargets = nil
+            if actualDamage or retry then
+                -- Recheck the ORIGINAL damage timestamp on short retries:
+                -- multiple players' animations may replicate after HP loss.
+                local impactTime = retry and lastDamageAt or now
+                local matched = collectConcurrentAttackers(root, impactTime)
+                if #matched >= 2 then
+                    -- Each target has independent attack-animation evidence
+                    -- near the SAME actual HP-loss event.
+                    -- Never add an unknown player based on proximity alone.
+                    if #matched > 4 then
+                        f9HitTracker("V10_MULTI_LIMIT", nil,
+                            tostring(#matched) .. " candidates; first four only")
+                        while #matched > 4 do table.remove(matched) end
+                    end
+                    simultaneousTargets = matched
+                    target = matched[1].player
+                    reason = "V9 " .. tostring(#matched)
+                        .. " separately matched attacking players"
+                    f9HitTracker("V9_MULTI_MATCH", target,
+                        tostring(#matched) .. " players with attack animations"
+                        .. " near HP loss; sending sequentially")
+                end
+            end
+]==], [==[            local simultaneousTargets = nil
+            if actualDamage or retry then
+                local matched = collectConcurrentAttackers(root, impactTime)
+                if reason == "attacker tag" then
+                    f9HitTracker("V15_DAMAGE_TAG", target,
+                        tostring(#matched) .. " animated candidates")
+                elseif #matched == 1 then
+                    target = matched[1].player
+                    reason = "single attack animation + this HP loss"
+                elseif #matched > 1 then
+                    table.sort(matched, function(a, b)
+                        return a.timingDelta < b.timingDelta
+                    end)
+                    local best, second = matched[1], matched[2]
+                    if best.timingDelta <= 0.18
+                        and second.timingDelta - best.timingDelta >= 0.11 then
+                        target = best.player
+                        reason = "one uniquely closest animation-to-damage"
+                        f9HitTracker("V15_TIMING_MATCH", target,
+                            ("delta=%.3fs gap=%.3fs"):format(best.timingDelta,
+                                second.timingDelta - best.timingDelta))
+                    else
+                        target = nil
+                        reason = "multiple attackers' animations are indistinguishable"
+                        if not retry then
+                            f9HitTracker("V15_AMBIGUOUS", nil,
+                                tostring(#matched) .. " candidate animations")
+                        end
+                    end
+                end
+            end
+]==] },
+        { [==[            local enqueueEntries = simultaneousTargets
+                or {{player = target, character = target.Character}}
+            local inserted = 0]==], [==[            local enqueueEntries = {{player = target, character = target.Character}}
+            local queuedForThisImpact = impactContext
+                and impactContext.queued or queuedThisImpact
+            local inserted = 0]==] },
+        { [==[                    and not queuedThisImpact[candidate.UserId]
+                    and now - (lastQueuedForTarget[candidate.UserId] or -math.huge)
+                        >= COUNTER_IMPACT_ECHO_SECONDS then
+                    lastQueuedForTarget[candidate.UserId] = now
+                    queuedThisImpact[candidate.UserId] = true]==], [==[                    and not queuedForThisImpact[candidate.UserId] then
+                    lastQueuedForTarget[candidate.UserId] = now
+                    queuedForThisImpact[candidate.UserId] = true]==] }
+    }
+    for _, e in ipairs(_edits) do
+        local a, b = string.find(_ct, e[1], 1, true)
+        if not a or string.find(_ct, e[1], b + 1, true) then
+            error("[VOID HUB Counter TP V15] mismatch: "
+                .. string.sub(e[1], 1, 80))
+        end
+        _ct = string.sub(_ct, 1, a - 1)
+            .. e[2] .. string.sub(_ct, b + 1)
+    end
+    _body = string.sub(_body, 1, _a - 1)
+        .. _ct .. string.sub(_body, _b)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
