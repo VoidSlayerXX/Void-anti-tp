@@ -5343,6 +5343,119 @@ do
         .. _walk .. string.sub(_body, _b)
 end
 
+
+-- COUNTER TP V16: CROWD-SAFE RETURN GUARD
+-- V2 only. Preserve the last safe world position through serial attackers,
+-- and permit bounded corrections for late server classroom echoes after
+-- StopCarry. Do not change hit recognition, the 9-stud range, or other modules.
+do
+    local _start = [==[-- DEFENSE: COUNTER TP (TARGETED CARRY/EVENT, NO BUBBLE)]==]
+    local _stop = [==[-- VOID HUB V1 / UNIFIED COMMAND CENTER LAYOUT]==]
+    local _a = string.find(_body, _start, 1, true)
+    local _b = _a and string.find(_body, _stop, _a + #_start, true)
+    if not _a or not _b then error("[VOID HUB Counter TP V16] module missing") end
+    local _ct = string.sub(_body, _a, _b - 1)
+    local _edits = {
+        { [==[        local handoffReleased = false
+        local selfReturnDone = false
+        local function targetStillLinked()]==], [==[        local handoffReleased = false
+        -- A new hit can start while the previous server teleport has left
+        -- OUR avatar in Classroom. Do not capture Classroom as our home.
+        local startedInClassroom =
+            (root.Position - CLASSROOM_POSITION).Magnitude < 32
+        local savedHome = Gui:GetAttribute("CounterTPSafeHomeCFrame")
+        local savedUntil = tonumber(
+            Gui:GetAttribute("CounterTPSafeHomeUntil")) or -math.huge
+        local stableReturnCFrame = originalCFrame
+        if startedInClassroom and typeof(savedHome) == "CFrame"
+            and os.clock() < savedUntil
+            and (savedHome.Position - CLASSROOM_POSITION).Magnitude > 40 then
+            stableReturnCFrame = savedHome
+        elseif not startedInClassroom and farFromClassroom then
+            Gui:SetAttribute("CounterTPSafeHomeCFrame", originalCFrame)
+            Gui:SetAttribute("CounterTPSafeHomeUntil", os.clock() + 12)
+        end
+        local selfReturnCount, lastSelfReturnAt = 0, -math.huge
+        local function targetStillLinked()]==] },
+        { [==[            for _, part in ipairs(linkedParts) do
+                if part:IsA("BasePart") and part:IsDescendantOf(targetChar) then
+                    return true
+                end
+            end]==], [==[            -- In a crowd, an OLDER carried player may still be welded.
+            -- Wait for every other player's link to release, not just target.
+            for _, part in ipairs(linkedParts) do
+                if part:IsA("BasePart") then
+                    local model = part:FindFirstAncestorOfClass("Model")
+                    local other = model
+                        and Players:GetPlayerFromCharacter(model)
+                    if other and other ~= Player then return true end
+                end
+            end]==] },
+        { [==[            if not handoffReleased or selfReturnDone]==],
+          [==[            if not handoffReleased or selfReturnCount >= 8]==] },
+        { [==[                or hum.PlatformStand or hum.Sit or root.Anchored
+                or not farFromClassroom then return end]==],
+          [==[                or root.Anchored
+                or (stableReturnCFrame.Position - CLASSROOM_POSITION).Magnitude
+                    <= 40 then return end]==] },
+        { [==[            if not wrongRoom or targetStillLinked() then return end]==],
+          [==[            if not wrongRoom or targetStillLinked()
+                or os.clock() - lastSelfReturnAt < 0.09 then return end]==] },
+        { [==[            if ok then
+                selfReturnDone = true
+                f9HitTracker("V13_SELF_RETURNED", target,
+                    "single snap after StopCarry; no repeat")
+            end]==],
+          [==[            if ok then
+                selfReturnCount += 1
+                lastSelfReturnAt = os.clock()
+                f9HitTracker("V16_SELF_RETURNED", target,
+                    "safe classroom return " .. tostring(selfReturnCount))
+            end]==] },
+        { [==[                or isManualGrabWindow() or now - guardStarted > 1.45 then]==],
+          [==[                or isManualGrabWindow() or now - guardStarted > 4.5 then]==] },
+        { [==[            if farFromClassroom
+                and (root.Position - CLASSROOM_POSITION).Magnitude < 28]==],
+          [==[            if (stableReturnCFrame.Position - CLASSROOM_POSITION).Magnitude > 40
+                and (root.Position - CLASSROOM_POSITION).Magnitude < 28]==] }
+    }
+    for _, edit in ipairs(_edits) do
+        local i, j = string.find(_ct, edit[1], 1, true)
+        if not i or string.find(_ct, edit[1], j + 1, true) then
+            error("[VOID HUB Counter TP V16] incompatible: "
+                .. string.sub(edit[1], 1, 75))
+        end
+        _ct = string.sub(_ct, 1, i - 1)
+            .. edit[2] .. string.sub(_ct, j + 1)
+    end
+    -- The aftercare guard has a shared anchor; unlike per-hit originalCFrame,
+    -- this remains valid when consecutive hits arrive while we are in class.
+    local _old = "originalCFrame.Position"
+    local _new = "stableReturnCFrame.Position"
+    local _begin = string.find(_ct, "local handoffReleased = false", 1, true)
+    local _finish = string.find(_ct, "        stopOwnGuard()", _begin, true)
+    if not _begin or not _finish then
+        error("[VOID HUB Counter TP V16] return guard anchors missing")
+    end
+    local _head = string.sub(_ct, 1, _begin - 1)
+    local _guard = string.sub(_ct, _begin, _finish - 1)
+    local _tail = string.sub(_ct, _finish)
+    local _, n = string.gsub(_guard, _old, "")
+    if n ~= 2 then error("[VOID HUB Counter TP V16] expected 2 home references, got " .. n) end
+    _guard = string.gsub(_guard, _old, _new)
+    -- The Heartbeat's own late-arrival check needs the same stable anchor.
+    local _heartbeatOld = [==[and (root.Position - originalCFrame.Position).Magnitude > 35 then]==]
+    local _heartbeatNew = [==[and (root.Position - stableReturnCFrame.Position).Magnitude > 35 then]==]
+    local h1, h2 = string.find(_tail, _heartbeatOld, 1, true)
+    if not h1 or string.find(_tail, _heartbeatOld, h2 + 1, true) then
+        error("[VOID HUB Counter TP V16] heartbeat return anchor missing")
+    end
+    _tail = string.sub(_tail, 1, h1 - 1)
+        .. _heartbeatNew .. string.sub(_tail, h2 + 1)
+    _ct = _head .. _guard .. _tail
+    _body = string.sub(_body, 1, _a - 1) .. _ct .. string.sub(_body, _b)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
