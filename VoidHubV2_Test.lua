@@ -5775,6 +5775,103 @@ do
         .. _ct .. string.sub(_body, _b)
 end
 
+
+-- CLASSROOM RETURN V19: STEADY SINGLE SELF-RETURN
+-- Counter TP and Forcefield self-return ONLY. Prevent an old checkpoint
+-- from repeatedly pulling a moving avatar backward. Never send the local
+-- player TO Classroom; only recover from an actual server classroom snap.
+-- No change to attack detection (0.01s), shared queue, AntiGrab or TP Walk.
+do
+    local function editSection(startMarker, endMarker, edits, label)
+        local a = string.find(_body, startMarker, 1, true)
+        local b = a and string.find(_body, endMarker, a + #startMarker, true)
+        if not a or not b then error("[VOID HUB RETURN V19] missing " .. label) end
+        local block = string.sub(_body, a, b - 1)
+        for _, pair in ipairs(edits) do
+            local i, j = string.find(block, pair[1], 1, true)
+            if not i or string.find(block, pair[1], j + 1, true) then
+                error("[VOID HUB RETURN V19] incompatible "
+                    .. label .. ": " .. string.sub(pair[1], 1, 90))
+            end
+            block = string.sub(block, 1, i - 1)
+                .. pair[2] .. string.sub(block, j + 1)
+        end
+        _body = string.sub(_body, 1, a - 1)
+            .. block .. string.sub(_body, b)
+    end
+
+    editSection(
+        [==[-- DEFENSE: COUNTER TP (TARGETED CARRY/EVENT, NO BUBBLE)]==],
+        [==[-- VOID HUB V1 / UNIFIED COMMAND CENTER LAYOUT]==],
+        {
+            { [==[        local selfReturnCount, lastSelfReturnAt = 0, -math.huge
+        local function targetStillLinked()]==],
+              [==[        local selfReturnCount, lastSelfReturnAt = 0, -math.huge
+        local classroomFirstSeenAt = nil
+        local earliestReturnAt = math.huge
+        local function targetStillLinked()]==] },
+            { [==[            if not handoffReleased or selfReturnCount >= 8]==],
+              [==[            -- One completed return per individual hit, never eight
+            -- rapid back-and-forth position corrections.
+            if not handoffReleased or selfReturnCount >= 1]==] },
+            { [==[            if not wrongRoom or targetStillLinked()
+                or os.clock() - lastSelfReturnAt < 0.09 then return end]==],
+              [==[            if not wrongRoom then
+                classroomFirstSeenAt = nil
+                return -- walking elsewhere must NEVER snap to an old checkpoint
+            end
+            local returnNow = os.clock()
+            classroomFirstSeenAt = classroomFirstSeenAt or returnNow
+            -- Let the server release and the classroom position settle.
+            -- Only one correction, not repeated positional pinning.
+            if returnNow < earliestReturnAt
+                or returnNow - classroomFirstSeenAt < 0.10
+                or targetStillLinked() then return end]==] },
+            { [==[        handoffReleased = true
+        task.delay(0.020, returnSelfAfterRelease)]==],
+              [==[        handoffReleased = true
+        earliestReturnAt = os.clock() + 0.14
+        task.delay(0.16, returnSelfAfterRelease)]==] },
+        }, "Counter TP")
+
+    editSection(
+        [==[-- V2 FORCEFIELD V119: radius-based sequential push intervals, safe self-return.]==],
+        [==[-- V2 only: Counter TP uses the working Anti-Grab targeted classroom]==],
+        {
+            { [==[                    and corrections < 3 and now - lastCorrectionAt >= 0.055 then]==],
+              [==[                    -- Never continuously pin the character to an
+                    -- earlier spot; one confirmed classroom snap per handoff.
+                    and corrections < 1
+                    and selfHandoffComplete
+                    and now - guardLastPushStartedAt >= 0.20
+                    and now - lastCorrectionAt >= 0.18 then]==] },
+            { [==[                local fastReturnDone = false
+                local function fastSelfReturn()]==],
+              [==[                local fastReturnDone = false
+                local classroomFirstSeenAt = nil
+                local function fastSelfReturn()]==] },
+            { [==[                    local velocity = root.AssemblyLinearVelocity
+                    local flat = Vector3.new(velocity.X, 0, velocity.Z)
+                    if flat.Magnitude > 200 then flat = flat.Unit * 80 end
+                    local didReturn = pcall(function()]==],
+              [==[                    local seenNow = os.clock()
+                    classroomFirstSeenAt = classroomFirstSeenAt or seenNow
+                    if seenNow - classroomFirstSeenAt < 0.08 then return end
+                    local velocity = root.AssemblyLinearVelocity
+                    local flat = Vector3.new(velocity.X, 0, velocity.Z)
+                    if flat.Magnitude > 200 then flat = flat.Unit * 80 end
+                    local didReturn = pcall(function()]==] },
+            { [==[                task.delay(0.015, fastSelfReturn)
+                task.delay(0.060, fastSelfReturn)
+                task.delay(0.110, fastSelfReturn)]==],
+              [==[                -- Deliberate, non-jittery aftercare rather than
+                -- three corrections in the first 0.11 seconds.
+                task.delay(0.16, fastSelfReturn)
+                task.delay(0.28, fastSelfReturn)
+                task.delay(0.40, fastSelfReturn)]==] },
+        }, "Forcefield")
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
