@@ -5290,6 +5290,59 @@ do
     _body = string.sub(_body, 1, _from - 1) .. _ff .. string.sub(_body, _to)
 end
 
+
+-- TP WALK V3: CONTINUOUS MOVEMENT DURING OUTGOING COUNTERS
+-- V2 TP Walk only: keep moving through outgoing CounterTP and Forcefield
+-- serial handoffs, preserve manual G movement, and prevent rollback speed
+-- pulsing. True immobilization/other teleport ownership still pauses.
+do
+    local _start = [==[-- TP WALK V118 - ground + air boost, including manual G carries.]==]
+    local _stop = [==[-- MOVEMENT: NO SLOW (V68)]==]
+    local _a = string.find(_body, _start, 1, true)
+    local _b = _a and string.find(_body, _stop, _a + #_start, true)
+    if not _a or not _b then error("[VOID HUB TP Walk V3] module missing") end
+    local _walk = string.sub(_body, _a, _b - 1)
+    local _edits = {
+        { [==[        refreshGhost(character, root, os.clock())
+        local state = humanoid:GetState()]==], [==[        -- Skip collision-helper maintenance on immobilized frames.
+        local state = humanoid:GetState()]==] },
+        { [==[            or (SharedTeleportOwner ~= nil
+                and SharedTeleportOwner ~= "Forcefield")
+            or root.Anchored]==], [==[            or (SharedTeleportOwner ~= nil
+                and SharedTeleportOwner ~= "Forcefield"
+                and SharedTeleportOwner ~= "CounterTP")
+            or root.Anchored]==] },
+        { [==[            or Gui:GetAttribute("BringSelfLockActive") == true
+            or Gui:GetAttribute("OutgoingBringActive") == true then
+            lastBoostPosition, lastBoostDirection = nil, nil
+            return
+        end
+        local now = os.clock()
+        local manualGCarryWindow = isManualGrabWindow()]==], [==[            or Gui:GetAttribute("BringSelfLockActive") == true
+            or (Gui:GetAttribute("OutgoingBringActive") == true
+                and not isManualGrabWindow()) then
+            lastBoostPosition, lastBoostDirection = nil, nil
+            return
+        end
+        local now = os.clock()
+        refreshGhost(character, root, now)
+        local manualGCarryWindow = isManualGrabWindow()]==] },
+        { [==[                    boostScale = math.max(0.98, boostScale * 0.995)]==], [==[                    -- Avoid repeated artificial speed drops on rollbacks.
+                    boostScale = 1]==] }
+    }
+    for _, pair in ipairs(_edits) do
+        local i, j = string.find(_walk, pair[1], 1, true)
+        if not i or string.find(_walk, pair[1], j + 1, true) then
+            error("[VOID HUB TP Walk V3] incompatible: "
+                .. string.sub(pair[1], 1, 75))
+        end
+        _walk = string.sub(_walk, 1, i - 1)
+            .. pair[2] .. string.sub(_walk, j + 1)
+    end
+    _body = string.sub(_body, 1, _a - 1)
+        .. _walk .. string.sub(_body, _b)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
