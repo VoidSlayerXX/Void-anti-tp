@@ -3927,6 +3927,164 @@ do
         .. _ff .. string.sub(_body, _to)
 end
 
+
+-- VOID HUB V2 DEFENSE V190: AUTO DECLINE / ANTI TP / ANTI VOID UPGRADES
+-- Imported antivoid.txt behavior: Stepped height check (+15) and
+-- 0.15-second velocity prediction, merged into the already safer V82 rescue.
+-- No extra independent GUI or conflicting position-pinning loop.
+-- Auto Decline, Anti TP, Anti Void only. Shared-teleport owners are respected.
+do
+    local function patchSection(startMarker, endMarker, replacements, label)
+        local a = string.find(_body, startMarker, 1, true)
+        local b = a and string.find(_body, endMarker, a + #startMarker, true)
+        if not a or not b then error("[VOID HUB V190] missing " .. label) end
+        local part = string.sub(_body, a, b - 1)
+        for _, edit in ipairs(replacements) do
+            local i, j = string.find(part, edit[1], 1, true)
+            if not i or string.find(part, edit[1], j + 1, true) then
+                error("[VOID HUB V190] incompatible " .. label .. ": "
+                    .. string.sub(edit[1], 1, 75))
+            end
+            part = string.sub(part, 1, i - 1)
+                .. edit[2] .. string.sub(part, j + 1)
+        end
+        _body = string.sub(_body, 1, a - 1) .. part .. string.sub(_body, b)
+    end
+    patchSection(
+        [==[local function StartAutoDecline()]==],
+        [==[local function StopAutoDecline()]==],
+        {
+            { [==[    -- Faster confirmed carry/lock response; still capped and event-driven.
+    local RECOVER_WINDOW = 3.40
+    local MAX_RECOVERY_CHAIN_SECONDS = 6.00
+    local GET_UP_COOLDOWN = 0.050
+    local MIN_REJECT_INTERVAL = 0.035
+    local CLASSIC_GRACE = 0.12 -- Anti Grab remains the first responder.
+    local MAX_RETURN_CORRECTIONS = 12]==], [==[    -- V190: faster rejections only during real incoming lock events.
+    -- Bounded corrections, no remote spam while idle or during own actions.
+    local RECOVER_WINDOW = 3.85
+    local MAX_RECOVERY_CHAIN_SECONDS = 6.80
+    local GET_UP_COOLDOWN = 0.040
+    local MIN_REJECT_INTERVAL = 0.030
+    local CLASSIC_GRACE = 0.12 -- Anti Grab still handles its first frame.
+    local MAX_RETURN_CORRECTIONS = 15]==] },
+            { [==[            local checkpoint = (now - lastSafeAt < 1.50)
+                and lastSafePivot or nil]==], [==[            local checkpoint = (now - lastSafeAt < 1.90)
+                and lastSafePivot or nil]==] },
+            { [==[                and now - lastRecoveryCorrection >= 0.07 then]==], [==[                and now - lastRecoveryCorrection >= 0.055 then]==] },
+            { [==[        for _, delaySeconds in ipairs({0.016, 0.04, 0.08, 0.15, 0.28, 0.48, 0.80, 1.35, 2.10, 3.00}) do]==], [==[        for _, delaySeconds in ipairs({0.012, 0.03, 0.06, 0.11, 0.20, 0.36, 0.62, 1.00, 1.65, 2.55, 3.50}) do]==] },
+            { [==[            for _, delaySeconds in ipairs({0.045, 0.12, 0.26}) do]==], [==[            for _, delaySeconds in ipairs({0.03, 0.09, 0.20, 0.38, 0.62}) do]==] }
+        },
+        "AutoDecline")
+    patchSection(
+        [==[local function StartAutoDeclineRequests()]==],
+        [==[local function StopAutoDeclineRequests()]==],
+        {
+            { [==[    local CHECK_INTERVAL = 0.012 -- Heartbeat-limited
+    local RETRY_INTERVAL = 0.035 -- shared reject rate; no extra remote loop
+    local INCOMING_WINDOW = 3.4
+    local ACTIVE_REACTION_SECONDS = 3.4
+    local SAFE_SPOT_AGE = 2.2]==], [==[    -- Reactive lock checks remain event-driven. One bounded reject owner.
+    local CHECK_INTERVAL = 0.010 -- Heartbeat-limited, not an active spam loop
+    local RETRY_INTERVAL = 0.030 -- coalesced with main reject handler
+    local INCOMING_WINDOW = 3.85
+    local ACTIVE_REACTION_SECONDS = 3.85
+    local SAFE_SPOT_AGE = 2.4]==] },
+            { [==[            if hard and now - lastGetUpAt >= 0.09 then]==], [==[            if hard and now - lastGetUpAt >= 0.055 then]==] }
+        },
+        "AutoDeclineRequests")
+    patchSection(
+        [==[-- DEFENSE: ANTI TP (SELF ONLY) - V112 STRENGTHENED CLASSROOM RECOVERY]==],
+        [==[-- Anti Void supplied by the user, integrated as a private module with panel lifecycle cleanup.]==],
+        {
+            { [==[    local MIN_SUDDEN_JUMP = 16
+    local MIN_CLASSROOM_JUMP = 9
+    local SAFE_MAX_AGE = 30
+    local RETURN_GAP = 0.24
+    local SAFE_SAMPLE_INTERVAL = 0.025]==], [==[    -- V190: respond to clear forced jumps sooner, but preserve normal
+    -- Follow, TP Walk, manual G, ragdoll and outgoing teleport exemptions.
+    local MIN_SUDDEN_JUMP = 14
+    local MIN_CLASSROOM_JUMP = 9
+    local SAFE_MAX_AGE = 30
+    local RETURN_GAP = 0.12
+    local SAFE_SAMPLE_INTERVAL = 0.020]==] },
+            { [==[        rescueUntil = lastRescue + 2.55]==], [==[        rescueUntil = lastRescue + 2.90]==] },
+            { [==[        for _, delaySeconds in ipairs({0.02, 0.055, 0.11, 0.20, 0.32, 0.48, 0.72, 1.00, 1.35, 1.80, 2.40}) do]==], [==[        for _, delaySeconds in ipairs({0.015, 0.038, 0.075, 0.14, 0.23, 0.38, 0.58, 0.85, 1.18, 1.55, 2.05, 2.72}) do]==] },
+            { [==[                if delaySeconds == 2.40 and alive and enabled]==], [==[                if delaySeconds == 2.72 and alive and enabled]==] }
+        },
+        "AntiTP")
+    patchSection(
+        [==[-- VOID HUB V82 | stronger ground-validated, predictive Anti Void.]==],
+        [==[    end)()
+    local card = makeFeatureCard(DefensePage, "Anti Void", 260)]==],
+        {
+            { [==[local heartbeatConn, charAddedConn = nil, nil]==], [==[local heartbeatConn, charAddedConn, steppedConn = nil, nil, nil]==] },
+            { [==[local SAMPLE_INTERVAL = 0.12
+local CHECK_INTERVAL = 0.06]==], [==[-- Retain V82's faster validated checkpoint and early fall prediction.
+-- Add the uploaded antivoid.txt Stepped guard (offset +15, prediction 0.15s).
+local SAMPLE_INTERVAL = 0.12
+local CHECK_INTERVAL = 0.06
+local UPLOADED_TRIGGER_OFFSET = 15
+local UPLOADED_PREDICTION_SECONDS = 0.15]==] },
+            { [==[local function disconnectHeartbeat()
+    if heartbeatConn then
+        heartbeatConn:Disconnect()
+        heartbeatConn = nil
+    end
+end]==], [==[local function disconnectHeartbeat()
+    if heartbeatConn then
+        heartbeatConn:Disconnect()
+        heartbeatConn = nil
+    end
+    -- A respawn/off toggle must never leave a stale Stepped rescue listener.
+    if steppedConn then
+        steppedConn:Disconnect()
+        steppedConn = nil
+    end
+end]==] },
+            { [==[        if humanoid.Health <= 0 or DeathTPIsEscaping then return end
+        checkElapsed += dt]==], [==[        if humanoid.Health <= 0 or DeathTPIsEscaping then return end
+        -- Our own carry/teleport sequences must not fight the Anti-Void
+        -- rescue while safely above the lethal boundary.
+        local lethalY = Workspace.FallenPartsDestroyHeight
+        if root.Position.Y > lethalY + UPLOADED_TRIGGER_OFFSET + 10
+            and (SharedTeleportOwner ~= nil
+                or os.clock() < AntiTPIntentionalTeleportUntil
+                or Gui:GetAttribute("AntiGrabRecovering") == true) then
+            return
+        end
+        checkElapsed += dt]==] },
+            { [==[    end)
+end
+
+local function enableAntiVoid()]==], [==[    end)
+    -- Uploaded Stepped + vertical-velocity predictor: an emergency check
+    -- between the existing Heartbeat scans. Uses V82's raycast-validated
+    -- saved checkpoint / real spawn fallback, never a blind midair pin.
+    steppedConn = RunService.Stepped:Connect(function()
+        if not antiVoidEnabled or generation ~= setupGeneration
+            or me.Character ~= character or not character.Parent
+            or not root.Parent or humanoid.Health <= 0
+            or DeathTPIsEscaping then return end
+        local voidY = Workspace.FallenPartsDestroyHeight
+        local y = root.Position.Y
+        local predictedY = y + root.AssemblyLinearVelocity.Y
+            * UPLOADED_PREDICTION_SECONDS
+        local emergencyLine = voidY + UPLOADED_TRIGGER_OFFSET
+        if y >= emergencyLine and predictedY >= emergencyLine then return end
+        if (SharedTeleportOwner ~= nil
+            or os.clock() < AntiTPIntentionalTeleportUntil
+            or Gui:GetAttribute("AntiGrabRecovering") == true)
+            and y > voidY + 8 then return end
+        rescue(character, root, voidY)
+    end)
+end
+
+local function enableAntiVoid()]==] }
+        },
+        "AntiVoid")
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
