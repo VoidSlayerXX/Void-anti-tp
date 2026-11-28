@@ -3892,6 +3892,41 @@ do
     _body = string.sub(_body, 1, _a - 1) .. _ff .. string.sub(_body, _b)
 end
 
+
+-- FORCEFIELD V9: YIELD REMOTE OWNERSHIP TO ACTUAL COUNTER TP HITS
+-- V8 removed the 1.75s wave pause but Forcefield can continuously re-acquire
+-- the shared carry channel, starving Counter TP when the player takes damage.
+-- Yield only while a real Counter TP hit queue is pending. No change to FF
+-- push rate, 12-player waves, safe self return, whitelist or 40-stud cap.
+do
+    local _start = [==[-- V2 FORCEFIELD V119: radius-based sequential push intervals, safe self-return.]==]
+    local _stop = [==[-- V2 only: Counter TP uses the working Anti-Grab targeted classroom]==]
+    local _from = string.find(_body, _start, 1, true)
+    local _to = _from and string.find(_body, _stop, _from + #_start, true)
+    if not _from or not _to then error("[VOID HUB Forcefield V9] section missing") end
+    local _ff = string.sub(_body, _from, _to - 1)
+    local _before = [==[                and Gui:GetAttribute("AntiGrabRecovering") ~= true
+                -- SharedTeleportOwner alone prevents conflicting handoffs;
+                -- a passive Counter TP queue should not block every push.
+                and now - lastRequestAt >= pushInterval()]==]
+    local _after = [==[                and Gui:GetAttribute("AntiGrabRecovering") ~= true
+                -- V9: a confirmed hit has already queued Counter TP.
+                -- Do not start ANOTHER outgoing Forcefield carry while
+                -- the hit worker is waiting to claim SharedTeleportOwner.
+                -- Existing FF carry finishes first; no interleaved remotes.
+                -- The Counter TP worker clears this flag after its bounded
+                -- queue completes, so Forcefield automatically resumes.
+                and Gui:GetAttribute("CounterTPHitPending") ~= true
+                and now - lastRequestAt >= pushInterval()]==]
+    local i, j = string.find(_ff, _before, 1, true)
+    if not i or string.find(_ff, _before, j + 1, true) then
+        error("[VOID HUB Forcefield V9] incompatible priority patch")
+    end
+    _ff = string.sub(_ff, 1, i - 1) .. _after .. string.sub(_ff, j + 1)
+    _body = string.sub(_body, 1, _from - 1)
+        .. _ff .. string.sub(_body, _to)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
