@@ -5268,6 +5268,28 @@ do
         .. _ct .. string.sub(_body, _b)
 end
 
+
+-- FORCEFIELD V12: CARRY SETTLING 0.020 SECONDS
+-- V2 Forcefield only. Decrease CarryRequest -> EventTeleportEvent settle
+-- from 0.050s to 0.020s. Keep serial Carry/Event/Stop, 0.10s repeat
+-- rearm, 40 studs, AntiGrab/CounterTP priority and self-return unchanged.
+do
+    local _begin = [==[-- V2 FORCEFIELD V119: radius-based sequential push intervals, safe self-return.]==]
+    local _end = [==[-- V2 only: Counter TP uses the working Anti-Grab targeted classroom]==]
+    local _from = string.find(_body, _begin, 1, true)
+    local _to = _from and string.find(_body, _end, _from + #_begin, true)
+    if not _from or not _to then error("[VOID HUB Forcefield V12] missing module") end
+    local _ff = string.sub(_body, _from, _to - 1)
+    local _old = [==[                task.wait(0.050) -- faster Carry registration; keep one in-flight target]==]
+    local _new = [==[                task.wait(0.020) -- requested 20ms Carry registration; serial owner still required]==]
+    local i, j = string.find(_ff, _old, 1, true)
+    if not i or string.find(_ff, _old, j + 1, true) then
+        error("[VOID HUB Forcefield V12] unexpected Carry settling state")
+    end
+    _ff = string.sub(_ff, 1, i - 1) .. _new .. string.sub(_ff, j + 1)
+    _body = string.sub(_body, 1, _from - 1) .. _ff .. string.sub(_body, _to)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
