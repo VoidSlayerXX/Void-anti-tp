@@ -4085,6 +4085,163 @@ local function enableAntiVoid()]==] }
         "AntiVoid")
 end
 
+
+-- ANTI GRAB V191: FIX QUEUE DEADLOCK, RAPID REARM AND DECLINE RACE
+-- AntiGrab priority: never wait on a passive CounterTP queue while that
+-- queue already yields to us. Avoid losing confirmed grab after 0.75s.
+-- Preserve AutoDecline V190 strength as a fallback after AntiGrab signals.
+do
+    local function patchSection(startMarker, endMarker, changes, module)
+        local a = string.find(_body, startMarker, 1, true)
+        local b = a and string.find(_body, endMarker, a + #startMarker, true)
+        if not a or not b then error("[VOID HUB V191] Missing " .. module) end
+        local part = string.sub(_body, a, b - 1)
+        for _, edit in ipairs(changes) do
+            local i, j = string.find(part, edit[1], 1, true)
+            if not i or string.find(part, edit[1], j + 1, true) then
+                error("[VOID HUB V191] Incompatible " .. module .. ": "
+                    .. string.sub(edit[1], 1, 80))
+            end
+            part = string.sub(part, 1, i - 1)
+                .. edit[2] .. string.sub(part, j + 1)
+        end
+        _body = string.sub(_body, 1, a - 1)
+            .. part .. string.sub(_body, b)
+    end
+    patchSection([==[do
+    -- Anti Grab V181:]==], [==[-- DEFENSE: ANTI TP]==], {
+        { [==[local COUNTER_MAX_AGE = 0.75]==], [==[local COUNTER_MAX_AGE = 2.40 -- bounded wait for an active shared-remote owner]==] },
+        { [==[                elseif Gui:GetAttribute("CounterTPHitPending") == true then
+                    -- Yield only the classroom REMOTE queue while CounterTP
+                    -- is servicing a hit. Anti-Grab's local self-release
+                    -- remains active for genuine incoming grabs.
+                    task.wait(0.03)
+                elseif SharedTeleportOwner ~= nil]==], [==[                -- CounterTP waits for AntiGrabClassroomPending, so waiting
+                -- for CounterTPHitPending HERE deadlocks both queues.
+                -- Active CounterTP remotes still yield via actual owner.
+                elseif SharedTeleportOwner ~= nil]==] },
+        { [==[        if classroomIncidentActive then return end
+        if classroomLastQueuedPlayer == target
+            and now - classroomLastQueuedAt < COUNTER_EVENT_DEDUP then return end]==], [==[        -- New PlatformStand=true edge can be a genuinely new grab after
+        -- a release. Rearm on that edge, but coalesce immediate same-grab
+        -- echoes for 0.18s to prevent duplicate outgoing counters.
+        if classroomIncidentActive
+            and (incidentSource ~= "platform"
+                or now - classroomLastQueuedAt < 0.18) then return end
+        if classroomLastQueuedPlayer == target
+            and now - classroomLastQueuedAt < COUNTER_EVENT_DEDUP then return end]==] }
+    }, "AntiGrab")
+    patchSection([==[local function StartAutoDecline()]==], [==[local function StopAutoDecline()]==], {
+        { [==[        -- Don't interfere with intentional manual grabs, Death TP, or
+        -- an outgoing Counter TP carry/event handshake.
+        if DeathTPIsEscaping or isManualGrabWindow()
+            or isOwnCounterTPWindow() then return true end]==], [==[        -- Don't interfere with intentional manual grabs, Death TP, or
+        -- an outgoing Counter TP carry/event handshake.
+        if DeathTPIsEscaping or isManualGrabWindow()
+            or isOwnCounterTPWindow() then return true end
+        -- AntiGrab's real incoming-grab recovery owns this incident.
+        -- Avoid a second StopCarry in its targeted counter handshake.
+        if Gui:GetAttribute("ClassicAntiGrabEnabled") == true
+            and (Gui:GetAttribute("AntiGrabClassroomPending") == true
+                or Gui:GetAttribute("AntiGrabRecovering") == true
+                or SharedTeleportOwner == "AntiGrabCounter") then
+            return true
+        end]==] },
+        { [==[        if Gui:GetAttribute("ClassicAntiGrabEnabled") == true and not held then
+            local requester = requesterFrom(...)
+            task.delay(0.08, function()
+                if active and declineProtectionEnabled() then
+                    rejectCarry(true, requester)
+                end
+            end)
+        else
+            rejectCarry(true, ...)
+        end]==], [==[        if Gui:GetAttribute("ClassicAntiGrabEnabled") == true then
+            -- Let AntiGrab see the actual CarryStarted/PlatformStand grab
+            -- before AutoDecline clears that evidence with StopCarry.
+            local requester = requesterFrom(...)
+            local expectedChar = char
+            task.delay(0.14, function()
+                if not active or not declineProtectionEnabled()
+                    or player.Character ~= expectedChar then return end
+                if Gui:GetAttribute("AntiGrabClassroomPending") == true
+                    or Gui:GetAttribute("AntiGrabRecovering") == true
+                    or SharedTeleportOwner == "AntiGrabCounter" then return end
+                -- V190 remains a fast fallback only if the avatar is STILL
+                -- immobilized after AntiGrab's own event observers ran.
+                local h = expectedChar
+                    and expectedChar:FindFirstChildOfClass("Humanoid")
+                local rt = expectedChar
+                    and expectedChar:FindFirstChild("HumanoidRootPart")
+                if h and rt and h.Health > 0 then
+                    local st = h:GetState()
+                    local heldNow = h.PlatformStand or rt.Anchored
+                        or (h.Sit and h.SeatPart == nil)
+                        or st == Enum.HumanoidStateType.Physics
+                        or st == Enum.HumanoidStateType.Ragdoll
+                    if heldNow then rejectCarry(true, requester) end
+                end
+            end)
+        else
+            rejectCarry(true, ...)
+        end]==] }
+    }, "AutoDecline")
+    patchSection([==[local function StartAutoDeclineRequests()]==], [==[local function StopAutoDeclineRequests()]==], {
+        { [==[    local function noteIncoming(...)
+        if not Get("AutoDeclineRequests", false)]==], [==[    local function noteIncoming(source, ...)
+        if not Get("AutoDeclineRequests", false)]==] },
+        { [==[        rejectBounded(now)
+        recoverLocal(now)
+    end
+
+    autoDeclineRequestsConnections.carry =
+        CarryStarted.OnClientEvent:Connect(noteIncoming)
+    autoDeclineRequestsConnections.invite =
+        SendRequestGui.OnClientEvent:Connect(noteIncoming)]==], [==[        if source == "CarryStarted"
+            and Gui:GetAttribute("ClassicAntiGrabEnabled") == true then
+            -- Let AntiGrab see and identify the victim's actual carry.
+            -- The AutoDecline fallback takes over only for a live lock.
+            local expectedChar = char
+            task.delay(0.14, function()
+                if not active or not Get("AutoDeclineRequests", false)
+                    or player.Character ~= expectedChar then return end
+                if Gui:GetAttribute("AntiGrabClassroomPending") == true
+                    or Gui:GetAttribute("AntiGrabRecovering") == true
+                    or SharedTeleportOwner == "AntiGrabCounter" then return end
+                local h = expectedChar
+                    and expectedChar:FindFirstChildOfClass("Humanoid")
+                local rt = expectedChar
+                    and expectedChar:FindFirstChild("HumanoidRootPart")
+                if h and rt and h.Health > 0 then
+                    local st = h:GetState()
+                    if h.PlatformStand or rt.Anchored
+                        or (h.Sit and h.SeatPart == nil)
+                        or st == Enum.HumanoidStateType.Physics
+                        or st == Enum.HumanoidStateType.Ragdoll then
+                        local t = os.clock()
+                        rejectBounded(t)
+                        recoverLocal(t)
+                    end
+                end
+            end)
+        else
+            -- Request GUI invites still decline without added latency.
+            rejectBounded(now)
+            recoverLocal(now)
+        end
+    end
+
+    autoDeclineRequestsConnections.carry =
+        CarryStarted.OnClientEvent:Connect(function(...)
+            noteIncoming("CarryStarted", ...)
+        end)
+    autoDeclineRequestsConnections.invite =
+        SendRequestGui.OnClientEvent:Connect(function(...)
+            noteIncoming("SendRequestGui", ...)
+        end)]==] }
+    }, "AutoDeclineRequests")
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
