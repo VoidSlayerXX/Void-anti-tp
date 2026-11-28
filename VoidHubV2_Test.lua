@@ -5523,6 +5523,129 @@ do
         .. _ff .. string.sub(_body, _b)
 end
 
+
+-- FORCEFIELD V18: QUICK CLEAN SELF CLASSROOM RETURN
+-- Only Forcefield self-return. One early post-StopCarry correction, with the
+-- old bounded observer/recovery as backup. Preserve normal walking momentum.
+-- Do not alter the hit queues, push cadence, or AntiGrab/CounterTP priority.
+do
+    local _start = [==[-- V2 FORCEFIELD V119: radius-based sequential push intervals, safe self-return.]==]
+    local _stop = [==[-- V2 only: Counter TP uses the working Anti-Grab targeted classroom]==]
+    local _a = string.find(_body, _start, 1, true)
+    local _b = _a and string.find(_body, _stop, _a + #_start, true)
+    if not _a or not _b then error("[VOID HUB FF V18] module missing") end
+    local _ff = string.sub(_body, _a, _b - 1)
+    local _changes = {
+        -- Prefer the actual spot immediately BEFORE this carry handoff
+        -- (not an old checkpoint far behind a TP Walk user).
+        { [==[            local saved = (recovery.character == ownChar
+                and recovery.checkpoint
+                and (recovery.checkpoint.Position - CLASSROOM_TARGET_POS).Magnitude > 55)
+                and recovery.checkpoint or root.CFrame]==],
+          [==[            local saved = ((root.Position - CLASSROOM_TARGET_POS).Magnitude > 55
+                and root.CFrame)
+                or ((recovery.character == ownChar and recovery.checkpoint
+                    and (recovery.checkpoint.Position - CLASSROOM_TARGET_POS).Magnitude > 55)
+                    and recovery.checkpoint) or root.CFrame]==] },
+        { [==[            guardSavedCFrame = (recovery.character == ownChar
+                and recovery.checkpoint) or saved]==],
+          [==[            guardSavedCFrame =
+                ((saved.Position - CLASSROOM_TARGET_POS).Magnitude > 55 and saved)
+                or ((recovery.character == ownChar and recovery.checkpoint)
+                    or saved)]==] },
+        -- A separate return may already have completed this incident.
+        -- Clear the observer's pending bit instead of snapping twice.
+        { [==[                if pendingReturn and not recovery.pending
+                    and selfHandoffComplete and not otherOwner]==],
+          [==[                if pendingReturn and away <= 8 then
+                    pendingReturn = false
+                    guardPendingReturn = false
+                end
+                if pendingReturn and not recovery.pending
+                    and selfHandoffComplete and not otherOwner]==] },
+        -- Faster, still bounded retry interval for genuine classroom snaps.
+        { [==[                    and corrections < 3 and now - lastCorrectionAt >= 0.085 then]==],
+          [==[                    and corrections < 3 and now - lastCorrectionAt >= 0.055 then]==] },
+        -- Don't erase movement/sprint velocity and cause freeze/go pulsing.
+        { [==[                    local ok = pcall(function()
+                        ownChar:PivotTo(safeFrame)
+                        ownRoot.AssemblyLinearVelocity = Vector3.zero
+                        ownRoot.AssemblyAngularVelocity = Vector3.zero
+                    end)]==],
+          [==[                    local ok = pcall(function()
+                        local velocity = ownRoot.AssemblyLinearVelocity
+                        local flat = Vector3.new(velocity.X, 0, velocity.Z)
+                        if flat.Magnitude > 200 then flat = flat.Unit * 80 end
+                        ownChar:PivotTo(CFrame.new(safeFrame.Position)
+                            * ownRoot.CFrame.Rotation)
+                        ownRoot.AssemblyLinearVelocity = Vector3.new(
+                            flat.X, math.clamp(velocity.Y, -65, 65), flat.Z)
+                    end)]==] },
+        -- First fast check shortly after the carry is released, instead
+        -- of waiting for a slower separate recovery scan. No correction
+        -- during an active player joint, another feature's handoff, or
+        -- normal movement away from Classroom.
+        { [==[            selfHandoffComplete = true
+            lastHandoffDoneAt = os.clock()
+            if ok and sent then]==],
+          [==[            selfHandoffComplete = true
+            lastHandoffDoneAt = os.clock()
+            if carried then
+                local fastReturnDone = false
+                local function fastSelfReturn()
+                    if fastReturnDone or not alive or not enabled
+                        or token ~= handoffToken
+                        or Player.Character ~= ownChar or not root.Parent
+                        or not human.Parent or human.Health <= 0
+                        or DeathTPIsEscaping or isManualGrabWindow()
+                        or root.Anchored or linkedToOtherPlayer(root)
+                        or Gui:GetAttribute("AntiRagdollClassroomTripActive") == true
+                        or Gui:GetAttribute("AntiGrabRecovering") == true
+                        or Gui:GetAttribute("AntiGrabClassroomPending") == true
+                        or Gui:GetAttribute("CounterTPHitPending") == true
+                        or (SharedTeleportOwner ~= nil
+                            and SharedTeleportOwner ~= "Forcefield") then return end
+                    if (saved.Position - CLASSROOM_TARGET_POS).Magnitude <= 55
+                        or (root.Position - CLASSROOM_TARGET_POS).Magnitude >= 28
+                        or (root.Position - saved.Position).Magnitude <= 35 then
+                        return
+                    end
+                    local velocity = root.AssemblyLinearVelocity
+                    local flat = Vector3.new(velocity.X, 0, velocity.Z)
+                    if flat.Magnitude > 200 then flat = flat.Unit * 80 end
+                    local didReturn = pcall(function()
+                        ownChar:PivotTo(CFrame.new(saved.Position)
+                            * root.CFrame.Rotation)
+                        root.AssemblyLinearVelocity = Vector3.new(
+                            flat.X, math.clamp(velocity.Y, -65, 65), flat.Z)
+                    end)
+                    if didReturn then
+                        fastReturnDone = true
+                        guardPendingReturn = false
+                        recovery.count += 1
+                        unsafeUntil = math.max(unsafeUntil, os.clock() + 0.12)
+                        warn("[VOID HUB FORCEFIELD V18] Quick self classroom return.")
+                    end
+                end
+                task.delay(0.015, fastSelfReturn)
+                task.delay(0.060, fastSelfReturn)
+                task.delay(0.110, fastSelfReturn)
+            end
+            if ok and sent then]==] }
+    }
+    for _, item in ipairs(_changes) do
+        local i, j = string.find(_ff, item[1], 1, true)
+        if not i or string.find(_ff, item[1], j + 1, true) then
+            error("[VOID HUB FF V18] incompatible marker: "
+                .. string.sub(item[1], 1, 90))
+        end
+        _ff = string.sub(_ff, 1, i - 1)
+            .. item[2] .. string.sub(_ff, j + 1)
+    end
+    _body = string.sub(_body, 1, _a - 1)
+        .. _ff .. string.sub(_body, _b)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
