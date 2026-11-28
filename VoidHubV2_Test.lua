@@ -3841,6 +3841,57 @@ do
         .. _ab .. string.sub(_body, _b)
 end
 
+
+-- FORCEFIELD V8: NO IDLE PAUSE BETWEEN SERIAL PUSH WAVES
+-- Only Forcefield V2 changes: the 1.75s wave timer was holding a ready
+-- next player even after the previous serialized push fully released.
+-- Keep all shared owner, self-return, whitelist, range 3-40, 12-max burst
+-- and V4 watchdog checks. Never overlap Carry/Event/Stop calls.
+do
+    local _start = [==[-- V2 FORCEFIELD V119: radius-based sequential push intervals, safe self-return.]==]
+    local _stop = [==[-- V2 only: Counter TP uses the working Anti-Grab targeted classroom]==]
+    local _a = string.find(_body, _start, 1, true)
+    local _b = _a and string.find(_body, _stop, _a + #_start, true)
+    if not _a or not _b then
+        error("[VOID HUB Forcefield V8] section missing")
+    end
+    local _ff = string.sub(_body, _a, _b - 1)
+    local _changes = {
+        { [==[                -- Small crowds: all five get a turn. Crowds over five:
+                -- at most twelve sequential pushes in the wave, with
+                -- subsequent queued players starting in the next wave.
+                and (burstCount < currentWaveLimit()
+                    or now - burstWindowStartedAt >= BURST_WINDOW_SECONDS) then]==], [==[                -- V8: No idle timer between completed waves. A wave is
+                -- logical batching only; the serial Carry/Event/Stop
+                -- ownership + safe release checks above remain mandatory.
+                -- New entrants can begin right after the previous handoff.
+                then]==] },
+        { [==[                if now - burstWindowStartedAt >= BURST_WINDOW_SECONDS then
+                    burstWindowStartedAt = now
+                    burstCount = 0
+                end
+                burstCount += 1]==], [==[                -- Roll straight into the next 5-person or 12-person wave
+                -- instead of waiting up to 1.75 seconds with a ready queue.
+                -- Still reset after an idle interval to keep wave stats sane.
+                if burstCount >= currentWaveLimit()
+                    or now - burstWindowStartedAt >= BURST_WINDOW_SECONDS then
+                    burstWindowStartedAt = now
+                    burstCount = 0
+                end
+                burstCount += 1]==] }
+    }
+    for _, entry in ipairs(_changes) do
+        local i, j = string.find(_ff, entry[1], 1, true)
+        if not i or string.find(_ff, entry[1], j + 1, true) then
+            error("[VOID HUB Forcefield V8] incompatible patch: "
+                .. string.sub(entry[1], 1, 80))
+        end
+        _ff = string.sub(_ff, 1, i - 1)
+            .. entry[2] .. string.sub(_ff, j + 1)
+    end
+    _body = string.sub(_body, 1, _a - 1) .. _ff .. string.sub(_body, _b)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
