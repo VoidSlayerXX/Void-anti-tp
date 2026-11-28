@@ -4351,6 +4351,275 @@ do
         .. _ct .. string.sub(_body, _b)
 end
 
+
+-- COUNTER TP V13: SINGLE FAST HANDOFF + ONE SAFE POST-RELEASE SELF RETURN
+-- Counter TP V2 only. Mirrors Forcefield's after-StopCarry safety:
+-- one Carry/Event/Stop handshake, one optional local snap-back after
+-- release, only for an actual wrong-classroom teleport and only when
+-- no target assembly joint is still connected. V12 No Slow retained.
+do
+    local _start = [==[-- DEFENSE: COUNTER TP (TARGETED CARRY/EVENT, NO BUBBLE)]==]
+    local _stop = [==[-- VOID HUB V1 / UNIFIED COMMAND CENTER LAYOUT]==]
+    local _a = string.find(_body, _start, 1, true)
+    local _b = _a and string.find(_body, _stop, _a + #_start, true)
+    if not _a or not _b then error("[VOID HUB Counter TP V13] section missing") end
+    local _ct = string.sub(_body, _a, _b - 1)
+    local _edits = {
+        { [==[        local selfCorrections, lastSelfCorrection = 0, -math.huge
+
+        stopOwnGuard()
+        ownGuardConnection = RunService.Heartbeat:Connect(function()
+            local now = os.clock()
+            if not targetReachedClassroom and targetWasAway
+                and target.Parent == Players then
+                local liveRoot = target.Character
+                    and target.Character:FindFirstChild("HumanoidRootPart")
+                if liveRoot
+                    and (liveRoot.Position - CLASSROOM_POSITION).Magnitude < 28
+                    and target.Character and liveRoot.Parent == target.Character then
+                    targetReachedClassroom = true
+                end
+            end
+            if not alive or not enabled or revision ~= generation
+                or Player.Character ~= ownChar or not root.Parent
+                or hum.Health <= 0 or DeathTPIsEscaping
+                or isManualGrabWindow() or now - guardStarted > 1.6 then
+                stopOwnGuard()
+                return
+            end
+            -- Anti-Ragdoll's deliberate 8-hit classroom trip owns its
+            -- own return. Never undo that trip from Counter TP.
+            if Gui:GetAttribute("AntiRagdollClassroomTripActive") == true
+                or not farFromClassroom then return end
+            local current = root.Position
+            local forcedToClassroom =
+                (current - CLASSROOM_POSITION).Magnitude < 28
+                and (current - originalCFrame.Position).Magnitude > 35
+            if forcedToClassroom then
+                selfMovedToClassroom = true
+                if selfCorrections < 5
+                    and now - lastSelfCorrection >= 0.07 then
+                    lastSelfCorrection = now
+                    selfCorrections += 1
+                    -- Restore only an actual wrong-room snap. Zeroing
+                    -- velocity here was killing real walking/sprint momentum
+                    -- even with No Slow enabled. Preserve ordinary speed,
+                    -- suppress only implausible physics fling velocity.
+                    pcall(function()
+                        local preservedVelocity = root.AssemblyLinearVelocity
+                        local flat = Vector3.new(preservedVelocity.X, 0,
+                            preservedVelocity.Z)
+                        if flat.Magnitude > 300 then
+                            flat = flat.Unit * 90
+                        end
+                        root.CFrame = CFrame.new(originalCFrame.Position)
+                            * root.CFrame.Rotation
+                        root.AssemblyLinearVelocity = Vector3.new(
+                            flat.X, math.clamp(preservedVelocity.Y, -85, 85),
+                            flat.Z)
+                    end)
+                end
+            end
+        end)
+
+]==], [==[        -- V13 mirrors Forcefield's snap-only aftercare: first allow the
+        -- Carry/Event/Stop sequence to release its target. Correct OUR
+        -- avatar only if the server genuinely moves it to Classroom.
+        -- No movement pin, no correction while linked to another player,
+        -- and a maximum of ONE local self-return per hit.
+        local handoffReleased = false
+        local selfReturnDone = false
+        local function targetStillLinked()
+            if not targetChar or not targetChar.Parent then return false end
+            local ok, linkedParts = pcall(function()
+                return root:GetConnectedParts(true)
+            end)
+            if not ok then return true end -- uncertain: do not risk a fling
+            for _, part in ipairs(linkedParts) do
+                if part:IsA("BasePart") and part:IsDescendantOf(targetChar) then
+                    return true
+                end
+            end
+            return false
+        end
+        local function returnSelfAfterRelease()
+            if not handoffReleased or selfReturnDone
+                or not alive or not enabled or revision ~= generation
+                or Player.Character ~= ownChar or not root.Parent
+                or hum.Health <= 0 or DeathTPIsEscaping
+                or isManualGrabWindow()
+                or Gui:GetAttribute("AntiRagdollClassroomTripActive") == true
+                or Gui:GetAttribute("AntiGrabRecovering") == true
+                or Gui:GetAttribute("AntiGrabClassroomPending") == true
+                or (SharedTeleportOwner ~= nil
+                    and SharedTeleportOwner ~= "CounterTP")
+                or hum.PlatformStand or hum.Sit or root.Anchored
+                or not farFromClassroom then return end
+            local current = root.Position
+            local wrongRoom = (current - CLASSROOM_POSITION).Magnitude < 28
+                and (current - originalCFrame.Position).Magnitude > 35
+            if not wrongRoom or targetStillLinked() then return end
+            local velocity = root.AssemblyLinearVelocity
+            local flat = Vector3.new(velocity.X, 0, velocity.Z)
+            -- Keep normal movement momentum, cap obvious fling velocity.
+            if flat.Magnitude > 280 then flat = flat.Unit * 85 end
+            local ok = pcall(function()
+                ownChar:PivotTo(CFrame.new(originalCFrame.Position)
+                    * root.CFrame.Rotation)
+                root.AssemblyLinearVelocity = Vector3.new(flat.X,
+                    math.clamp(velocity.Y, -75, 75), flat.Z)
+            end)
+            if ok then
+                selfReturnDone = true
+                f9HitTracker("V13_SELF_RETURNED", target,
+                    "single snap after StopCarry; no repeat")
+            end
+        end
+
+        stopOwnGuard()
+        ownGuardConnection = RunService.Heartbeat:Connect(function()
+            local now = os.clock()
+            if not targetReachedClassroom and targetWasAway
+                and target.Parent == Players then
+                local liveRoot = target.Character
+                    and target.Character:FindFirstChild("HumanoidRootPart")
+                if liveRoot
+                    and (liveRoot.Position - CLASSROOM_POSITION).Magnitude < 28
+                    and target.Character and liveRoot.Parent == target.Character then
+                    targetReachedClassroom = true
+                end
+            end
+            if not alive or not enabled or revision ~= generation
+                or Player.Character ~= ownChar or not root.Parent
+                or hum.Health <= 0 or DeathTPIsEscaping
+                or isManualGrabWindow() or now - guardStarted > 1.45 then
+                stopOwnGuard()
+                return
+            end
+            if farFromClassroom
+                and (root.Position - CLASSROOM_POSITION).Magnitude < 28
+                and (root.Position - originalCFrame.Position).Magnitude > 35 then
+                selfMovedToClassroom = true
+            end
+            -- Heartbeat observes delayed server echoes, but never retries a
+            -- completed local correction or modifies normal walking.
+            returnSelfAfterRelease()
+        end)
+
+]==] },
+        { [==[            -- 0.035s can release before a remote carry is established.
+            task.wait(0.085)]==], [==[            -- Faster, still serial: permit the target Carry to register.
+            task.wait(0.060)]==] },
+        { [==[        if didCarry then
+            -- Give the event a brief handoff before StopCarry releases it.
+            task.wait(0.05)
+            if Player.Character == ownChar and not isManualGrabWindow() then
+                pcall(function() stop:FireServer() end)
+            end
+        end
+
+]==], [==[        if didCarry then
+            -- Fast release, then permit a SINGLE local self-return only
+            -- after the carry has been stopped (never while still welded).
+            task.wait(0.035)
+            if Player.Character == ownChar and not isManualGrabWindow() then
+                pcall(function() stop:FireServer() end)
+            end
+        end
+        handoffReleased = true
+        task.delay(0.020, returnSelfAfterRelease)
+
+]==] },
+        { [==[        -- Only if the first event was sent and the same target has NOT
+        -- moved to classroom, permit one safe second handshake. Keep
+        -- CounterTP as the single remote owner through both attempts.
+        local retrySent = false
+        if ok and didEvent and targetWasAway then
+            local deadline = os.clock() + 0.24
+            while os.clock() < deadline
+                and not targetReachedClassroom and not selfMovedToClassroom
+                and alive and enabled and revision == generation do
+                task.wait(0.03)
+            end
+            local targetHum = targetChar
+                and targetChar:FindFirstChildOfClass("Humanoid")
+            local stillAtStart = targetRoot and targetBefore
+                and targetRoot.Parent == targetChar
+                and (targetRoot.Position - targetBefore).Magnitude <= 11
+            local stillNearby = targetRoot and root and root.Parent
+                and (targetRoot.Position - root.Position).Magnitude <= radius + 3
+            local safeRetry = alive and enabled and revision == generation
+                and Player.Character == ownChar and hum.Health > 0
+                and root and root.Parent and not root.Anchored
+                and target.Parent == Players
+                and target.Character == targetChar
+                and targetHum and targetHum.Health > 0
+                and not inPlayerList(State.Whitelist, target)
+                and stillAtStart and stillNearby and farFromClassroom
+                and not targetReachedClassroom and not selfMovedToClassroom
+                and SharedTeleportOwner == "CounterTP"
+                and Gui:GetAttribute("AntiGrabClassroomPending") ~= true
+                and Gui:GetAttribute("AntiRagdollClassroomTripActive") ~= true
+                and not counterSafetyPaused()
+                and not DeathTPIsEscaping and not isManualGrabWindow()
+                and (root.Position - CLASSROOM_POSITION).Magnitude >= 30
+            if safeRetry then
+                f9HitTracker("V8_HANDOFF_RETRY", target,
+                    "first request not confirmed; same target still nearby")
+                local secondCarry = false
+                local retryOk, retryError = pcall(function()
+                    carry:FireServer(target, round(offset.X), round(offset.Y),
+                        round(offset.Z), 0, 0, 0)
+                    secondCarry = true
+                    task.wait(0.10)
+                    local validNow = alive and enabled
+                        and revision == generation
+                        and Player.Character == ownChar
+                        and hum.Health > 0 and target.Parent == Players
+                        and target.Character == targetChar
+                        and targetHum.Health > 0
+                        and not inPlayerList(State.Whitelist, target)
+                        and not targetReachedClassroom and not selfMovedToClassroom
+                        and SharedTeleportOwner == "CounterTP"
+                        and not DeathTPIsEscaping and not isManualGrabWindow()
+                        and (root.Position - CLASSROOM_POSITION).Magnitude >= 30
+                    if validNow then
+                        ev:FireServer()
+                        retrySent = true
+                        f9HitTracker("V8_CLASSROOM_RETRY_SENT", target,
+                            "second and final handoff; server not yet confirmed")
+                        task.wait(0.05)
+                    end
+                end)
+                if secondCarry and Player.Character == ownChar
+                    and not isManualGrabWindow() then
+                    pcall(function() stop:FireServer() end)
+                end
+                if not retryOk then
+                    f9HitTracker("V8_RETRY_ERROR", target, tostring(retryError))
+                end
+            end
+        end
+
+]==], [==[        -- V13: ONE targeted Carry -> Event -> Stop per confirmed hit.
+        -- No second classroom request and no stale replication wait.
+        local retrySent = false
+
+]==] }
+    }
+    for _, entry in ipairs(_edits) do
+        local a, b = string.find(_ct, entry[1], 1, true)
+        if not a or string.find(_ct, entry[1], b + 1, true) then
+            error("[VOID HUB Counter TP V13] incompatible patch: "
+                .. string.sub(entry[1], 1, 90))
+        end
+        _ct = string.sub(_ct, 1, a - 1)
+            .. entry[2] .. string.sub(_ct, b + 1)
+    end
+    _body = string.sub(_body, 1, _a - 1)
+        .. _ct .. string.sub(_body, _b)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
