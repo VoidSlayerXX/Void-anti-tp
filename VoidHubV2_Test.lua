@@ -5723,6 +5723,58 @@ do
         .. _walk .. string.sub(_body, _b)
 end
 
+
+-- COUNTER TP V17: 0.01-SECOND CONTINUOUS HIT RETRIES
+-- Only CounterTP: scan the original HP-loss/attacker evidence on
+-- every 0.01-second retry while the existing 0.20-second detection window
+-- remains valid. One bounded worker per damage impact, not 20 timer jobs.
+-- Preserve independent crowded hits, validated targets, 2-second queues,
+-- 0.55-second safety, the 9-stud radius and other feature modules.
+do
+    local _start = [==[-- DEFENSE: COUNTER TP (TARGETED CARRY/EVENT, NO BUBBLE)]==]
+    local _stop = [==[-- VOID HUB V1 / UNIFIED COMMAND CENTER LAYOUT]==]
+    local _a = string.find(_body, _start, 1, true)
+    local _b = _a and string.find(_body, _stop, _a + #_start, true)
+    if not _a or not _b then
+        error("[VOID HUB Counter TP V17] module missing")
+    end
+    local _ct = string.sub(_body, _a, _b - 1)
+    local _old = [==[                for _, delaySeconds in ipairs({0.03, 0.09, 0.17, 0.29, 0.46}) do
+                    task.delay(delaySeconds, function()
+                        if alive and enabled and revision == generation
+                            and Player.Character == character
+                            and impactContexts[impactId] == impactContext then
+                            hit(signal, 0, impactId)
+                        end
+                    end)
+                end]==]
+    local _new = [==[                -- The immediate damage callback is attempt zero.
+                -- Retry at a requested 0.01-second cadence until 0.20s
+                -- from the original impact. task.wait is frame-limited:
+                -- actual Roblox scheduling can be slower than 10 ms.
+                task.spawn(function()
+                    for retryIndex = 1, 20 do
+                        task.wait(0.01)
+                        if not alive or not enabled
+                            or revision ~= generation
+                            or Player.Character ~= character
+                            or impactContexts[impactId] ~= impactContext
+                            or os.clock() - impactContext.at > 0.20 then
+                            break
+                        end
+                        hit(signal, 0, impactId)
+                    end
+                end)]==]
+    local i, j = string.find(_ct, _old, 1, true)
+    if not i or string.find(_ct, _old, j + 1, true) then
+        error("[VOID HUB Counter TP V17] retry scheduler mismatch")
+    end
+    _ct = string.sub(_ct, 1, i - 1)
+        .. _new .. string.sub(_ct, j + 1)
+    _body = string.sub(_body, 1, _a - 1)
+        .. _ct .. string.sub(_body, _b)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
