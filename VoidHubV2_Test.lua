@@ -5646,6 +5646,83 @@ do
         .. _ff .. string.sub(_body, _b)
 end
 
+
+-- TP WALK V4: VELOCITY DRIVEN NO RUBBERBAND BOOST
+-- V2 TP Walk ONLY: stop relocating HumanoidRootPart with CFrame every
+-- PreSimulation frame. Use continuous physics velocity for acceleration,
+-- preserving gravity, jump, yaw, live WASD, noclip constraints and speed UI.
+-- The server remains authoritative: no client can guarantee unthrottled speed.
+do
+    local _start = [==[-- TP WALK V118 - ground + air boost, including manual G carries.]==]
+    local _stop = [==[-- MOVEMENT: NO SLOW (V68)]==]
+    local _a = string.find(_body, _start, 1, true)
+    local _b = _a and string.find(_body, _stop, _a + #_start, true)
+    if not _a or not _b then error("[VOID HUB TP Walk V4] boundaries missing") end
+    local _walk = string.sub(_body, _a, _b - 1)
+    local edits = {
+        { [==[    local boostScale = 1
+    local lastBoostPosition, lastBoostDirection, lastBoostCharacter = nil, nil, nil]==],
+          [==[    local boostScale = 1
+    local lastBoostPosition, lastBoostDirection, lastBoostCharacter = nil, nil, nil
+    local lastVelocityBoostAt = -math.huge]==] },
+        { [==[        if horizontal.Magnitude < 0.05 then
+            -- Keep passing through a wall when standing still inside it.
+            refreshWallPass(character, root, now, nil, 0)
+            lastBoostPosition, lastBoostDirection = nil, nil
+            return
+        end]==],
+          [==[        if horizontal.Magnitude < 0.05 then
+            -- Release just the extra boost smoothly on key-up; never
+            -- interfere with vertical jump/fall velocity.
+            refreshWallPass(character, root, now, nil, 0)
+            if now - lastVelocityBoostAt < 0.22 then
+                local v = root.AssemblyLinearVelocity
+                local flat = Vector3.new(v.X, 0, v.Z)
+                local naturalSpeed = math.max(14, humanoid.WalkSpeed)
+                if flat.Magnitude > naturalSpeed then
+                    local decay = math.max(0,
+                        1 - math.clamp(tonumber(dt) or 0, 0, 0.05) * 19)
+                    local nextFlat = flat * decay
+                    root.AssemblyLinearVelocity = Vector3.new(
+                        nextFlat.X, v.Y, nextFlat.Z)
+                end
+            end
+            lastBoostPosition, lastBoostDirection = nil, nil
+            return
+        end]==] },
+        { [==[        -- Preserve rotation, gravity and velocity; never anchor the avatar.
+        root.CFrame = root.CFrame + step
+        lastBoostPosition, lastBoostDirection = root.Position, unitDirection]==],
+          [==[        -- Physics-driven boost: no per-frame positional teleports.
+        -- Repeated CFrame relocation was racing the server/Humanoid,
+        -- causing the walk-stop-walk rubber-banding in open areas.
+        -- PreSimulation velocity preserves real gravity and floor contact.
+        local v = root.AssemblyLinearVelocity
+        local currentFlat = Vector3.new(v.X, 0, v.Z)
+        local desiredFlat = step.Unit * (step.Magnitude / math.max(delta, 0.001))
+        local response = math.clamp(delta * 22, 0, 1)
+        local newFlat = currentFlat:Lerp(desiredFlat, response)
+        if newFlat.Magnitude > BOOST_SPEED_CAP then
+            newFlat = newFlat.Unit * BOOST_SPEED_CAP
+        end
+        root.AssemblyLinearVelocity = Vector3.new(
+            newFlat.X, v.Y, newFlat.Z)
+        lastVelocityBoostAt = now
+        lastBoostPosition, lastBoostDirection = root.Position, unitDirection]==] }
+    }
+    for _, change in ipairs(edits) do
+        local i, j = string.find(_walk, change[1], 1, true)
+        if not i or string.find(_walk, change[1], j + 1, true) then
+            error("[VOID HUB TP Walk V4] incompatible marker: "
+                .. string.sub(change[1], 1, 90))
+        end
+        _walk = string.sub(_walk, 1, i - 1)
+            .. change[2] .. string.sub(_walk, j + 1)
+    end
+    _body = string.sub(_body, 1, _a - 1)
+        .. _walk .. string.sub(_body, _b)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
