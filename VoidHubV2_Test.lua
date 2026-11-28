@@ -4675,7 +4675,7 @@ do
                     -- valid serial handoff and 0.55s safety backoff. Give
                     -- each confirmed hit a bounded but usable time to send.
                     -- Never queue indefinitely or replay stale attackers.
-                    local queueTTL = item.multiHit and 7.0 or 5.0
+                    local queueTTL = item.multiHit and 2.0 or 2.0
                     local timeoutAt = item.at + queueTTL]==] },
         { [==[                        counterSafetyUntil = math.max(counterSafetyUntil,
                             os.clock() + 1.0)
@@ -4796,7 +4796,7 @@ do
             if retry and retryId ~= unresolvedHitId then return end
             local actualDamage = (damage or 0) > 0.01]==], [==[            local retry = retryId ~= nil
             local impactContext = retry and impactContexts[retryId] or nil
-            if retry and (not impactContext or now - impactContext.at > 0.85) then
+            if retry and (not impactContext or now - impactContext.at > 0.20) then
                 return
             end
             local actualDamage = (damage or 0) > 0.01]==] },
@@ -5413,7 +5413,7 @@ do
                     "safe classroom return " .. tostring(selfReturnCount))
             end]==] },
         { [==[                or isManualGrabWindow() or now - guardStarted > 1.45 then]==],
-          [==[                or isManualGrabWindow() or now - guardStarted > 4.5 then]==] },
+          [==[                or isManualGrabWindow() or now - guardStarted > 1.5 then]==] },
         { [==[            if farFromClassroom
                 and (root.Position - CLASSROOM_POSITION).Magnitude < 28]==],
           [==[            if (stableReturnCFrame.Position - CLASSROOM_POSITION).Magnitude > 40
