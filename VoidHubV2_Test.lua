@@ -6014,6 +6014,122 @@ do
         .. _walk .. string.sub(_body, _b)
 end
 
+
+-- AUTO DECLINE V191: PRIORITIZE REAL INCOMING FREEZE
+-- Auto Decline + Auto Decline Requests ONLY. The outgoing Freeze V6,
+-- Forcefield, CounterTP, AntiGrab, TP Walk and other systems are unchanged.
+-- A genuine replicated immobilization plus a recent incoming request may
+-- preempt an outgoing carry-echo guard. Own outgoing Freeze echoes with
+-- no actual lock remain excluded. No unbounded remote spam or position pin.
+do
+    local function editSection(startMarker, endMarker, edits, label)
+        local a = string.find(_body, startMarker, 1, true)
+        local b = a and string.find(_body, endMarker, a + #startMarker, true)
+        if not a or not b then error("[VOID HUB Auto Decline V191] missing " .. label) end
+        local part = string.sub(_body, a, b - 1)
+        for _, edit in ipairs(edits) do
+            local i, j = string.find(part, edit[1], 1, true)
+            if not i or string.find(part, edit[1], j + 1, true) then
+                error("[VOID HUB Auto Decline V191] incompatible "
+                    .. label .. ": " .. string.sub(edit[1], 1, 90))
+            end
+            part = string.sub(part, 1, i - 1)
+                .. edit[2] .. string.sub(part, j + 1)
+        end
+        _body = string.sub(_body, 1, a - 1)
+            .. part .. string.sub(_body, b)
+    end
+
+    editSection(
+        [==[local function StartAutoDecline()]==],
+        [==[local function StopAutoDecline()]==],
+        {
+            { [==[    local function isOwnAction(confirmedIncoming)]==],
+              [==[    -- Only a physical incoming freeze / carry lock can override an
+    -- outgoing-echo hint. A plain incoming invite is not such evidence.
+    local function isReallyFrozen()
+        local c = player.Character
+        local h = c and c:FindFirstChildOfClass("Humanoid")
+        local r = c and c:FindFirstChild("HumanoidRootPart")
+        if not h or not r or h.Health <= 0 then return false end
+        local state = h:GetState()
+        return h.PlatformStand or r.Anchored
+            or (h.Sit and h.SeatPart == nil)
+            or state == Enum.HumanoidStateType.Physics
+            or state == Enum.HumanoidStateType.Ragdoll
+    end
+
+    local function isOwnAction(confirmedIncoming)]==] },
+            { [==[        if SharedTeleportOwner ~= nil then return true end
+        if not confirmedIncoming and now < (tonumber(
+            Gui:GetAttribute("FreezeOutgoingUntil")) or 0) then return true end]==],
+              [==[        local realIncomingFreeze = isReallyFrozen()
+            and (confirmedIncoming or now - lastIncomingEventAt <= 0.75)
+        if SharedTeleportOwner ~= nil and not realIncomingFreeze then return true end
+        if not confirmedIncoming and not realIncomingFreeze
+            and now < (tonumber(
+                Gui:GetAttribute("FreezeOutgoingUntil")) or 0) then return true end]==] },
+            { [==[        if now < (tonumber(Gui:GetAttribute(
+            "OutgoingBringSuppressUntil")) or -math.huge) then return true end
+        local ownTeleport = SharedTeleportOwner ~= nil]==],
+              [==[        if now < (tonumber(Gui:GetAttribute(
+            "OutgoingBringSuppressUntil")) or -math.huge)
+            and not realIncomingFreeze then return true end
+        -- Genuine freeze wins over a passive outgoing-carry echo marker;
+        -- the recovery interval already makes the outgoing Freeze yield.
+        if realIncomingFreeze then return false end
+        local ownTeleport = SharedTeleportOwner ~= nil]==] },
+            { [==[            if requester and now < (tonumber(Gui:GetAttribute(
+                "FreezeOutboundUntil_" .. tostring(requester.UserId))) or 0)
+                then return end]==],
+              [==[            if requester and not isReallyFrozen()
+                and now < (tonumber(Gui:GetAttribute(
+                    "FreezeOutboundUntil_" .. tostring(requester.UserId))) or 0)
+                then return end]==] },
+            { [==[        if now - lastReject < MIN_REJECT_INTERVAL then return end]==],
+              [==[        -- In a genuine locked state rearm slightly faster than
+        -- Freeze V6's bounded carry cadence, without per-frame flooding.
+        local rejectGap = isReallyFrozen() and 0.020
+            or MIN_REJECT_INTERVAL
+        if now - lastReject < rejectGap then return end]==] },
+            { [==[    local CLASSIC_GRACE = 0.12]==],
+              [==[    local CLASSIC_GRACE = 0.06]==] },
+        }, "AutoDecline")
+
+    editSection(
+        [==[local function StartAutoDeclineRequests()]==],
+        [==[local function StopAutoDeclineRequests()]==],
+        {
+            { [==[    local function isOwnMovement(now)]==],
+              [==[    -- TP Walk input and outgoing Freeze markers must not hide
+    -- a genuine new incoming carry that has immobilized the avatar.
+    local function confirmedIncomingFreeze(now)
+        if now - lastIncomingAt > 0.90 then return false end
+        local c = player.Character
+        local h = c and c:FindFirstChildOfClass("Humanoid")
+        local r = c and c:FindFirstChild("HumanoidRootPart")
+        if not h or not r or h.Health <= 0 then return false end
+        local st = h:GetState()
+        return h.PlatformStand or r.Anchored
+            or (h.Sit and h.SeatPart == nil)
+            or st == Enum.HumanoidStateType.Physics
+            or st == Enum.HumanoidStateType.Ragdoll
+    end
+
+    local function isOwnMovement(now)
+        if confirmedIncomingFreeze(now)
+            and not DeathTPIsEscaping and not isManualGrabWindow()
+            and not isOwnCounterTPWindow() then return false end]==] },
+            { [==[    local CLASSIC_GRACE = 0.12]==],
+              [==[    local CLASSIC_GRACE = 0.06]==] },
+            { [==[            or SharedTeleportOwner ~= nil
+            or isProtectedRequester(...) then return end]==],
+              [==[            or (SharedTeleportOwner ~= nil
+                and not confirmedIncomingFreeze(os.clock()))
+            or isProtectedRequester(...) then return end]==] },
+        }, "AutoDeclineRequests")
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
