@@ -4747,6 +4747,32 @@ do
         .. _ff .. string.sub(_body, _to)
 end
 
+
+-- FORCEFIELD V11: SAME PLAYER REARM EVERY 0.10 SECONDS
+-- Only the Forcefield contact-rearm interval. This controls when a player
+-- still inside the bubble may be queued again. Carry/Event/Stop remains
+-- serial and actual server push cadence is limited by safe handoff time.
+do
+    local _start = [==[-- V2 FORCEFIELD V119: radius-based sequential push intervals, safe self-return.]==]
+    local _stop = [==[-- V2 only: Counter TP uses the working Anti-Grab targeted classroom]==]
+    local _from = string.find(_body, _start, 1, true)
+    local _to = _from and string.find(_body, _stop, _from + #_start, true)
+    if not _from or not _to then
+        error("[VOID HUB Forcefield V11] module not found")
+    end
+    local _ff = string.sub(_body, _from, _to - 1)
+    local _before = [==[        local CONTINUOUS_CONTACT_REARM_SECONDS = 0.40 -- quicker repeated contact, still per-player bounded]==]
+    local _after = [==[        local CONTINUOUS_CONTACT_REARM_SECONDS = 0.10 -- requested fast same-player rearm; serial handoff still enforced]==]
+    local i, j = string.find(_ff, _before, 1, true)
+    if not i or string.find(_ff, _before, j + 1, true) then
+        error("[VOID HUB Forcefield V11] repeat interval mismatch")
+    end
+    _ff = string.sub(_ff, 1, i - 1)
+        .. _after .. string.sub(_ff, j + 1)
+    _body = string.sub(_body, 1, _from - 1)
+        .. _ff .. string.sub(_body, _to)
+end
+
 local _compiled, _compileErr = loadstring(_body)
 local _startupFinished = false
 local function _showUpdatedHubError(message)
